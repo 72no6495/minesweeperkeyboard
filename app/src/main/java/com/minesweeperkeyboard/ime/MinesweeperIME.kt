@@ -879,19 +879,26 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         }
     }
 
-    /** ニコちゃんのタップ：QWERTY 系では 1 文字削除、クラシックでは新しいゲーム */
+    /** ニコちゃんのタップ：1 文字削除して、盤面もリセット */
     private fun onFaceTap() {
-        if (mode.isQwerty) {
-            keyFeedback(statusBar, AudioManager.FX_KEYPRESS_DELETE)
-            onBackspace()
-        } else {
-            newGame()
-        }
+        keyFeedback(statusBar, AudioManager.FX_KEYPRESS_DELETE)
+        onBackspace()
+        resetBoard()
     }
 
-    /** ニコちゃんの長押し：QWERTY 系では入力欄の文字をすべて消す */
+    /** ニコちゃんの長押し：入力欄の文字をすべて消して、盤面もリセット */
     private fun onFaceLongPress() {
-        if (!mode.isQwerty) return
+        resetBoard()
+        clearAllText()
+    }
+
+    /** 盤面を新しくする（普通のキーボードでは最近の旗を 3 つまで残す） */
+    private fun resetBoard() {
+        handler.removeCallbacks(backgroundRestart)
+        newGame(carryFlags = mode == KeyboardMode.QWERTY_BACKGROUND)
+    }
+
+    private fun clearAllText() {
         composer.clear()
         highlight = -1
         lastWord = null
