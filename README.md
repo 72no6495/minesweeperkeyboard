@@ -144,7 +144,10 @@ app/src/main/java/com/minesweeperkeyboard/ime/
 
 ### リリース手順（開発者向け）
 
-`v` から始まるタグを push すると、GitHub Actions が APK をビルドして Releases に公開します。
+次のどちらかの方法で、GitHub Actions が APK をビルドして Releases に公開します。
+
+- **Actions** タブ → **Build APK** → **Run workflow** で `release_tag` に `v1.0.0` などを入力して実行
+- `v` から始まるタグを push する
 
 ```bash
 git tag v1.0.0

@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "公開するリリースのタグ（例: v1.0.0）。空ならビルドのみ"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -40,14 +45,16 @@ jobs:
           name: minesweeper-ime-apk
           path: dist/*.apk
 
-      # v* タグを push すると GitHub Release を作成して APK を添付する
+      # v* タグの push、または手動実行で release_tag を指定すると
+      # GitHub Release を作成して APK を添付する（タグが無ければこのコミットに作成）
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           cp dist/minesweeper-ime-release.apk "dist/minesweeper-ime-${TAG}.apk"
           gh release create "$TAG" "dist/minesweeper-ime-${TAG}.apk" \
+            --target "$GITHUB_SHA" \
             --title "マインスイーパーIME ${TAG}" \
             --generate-notes
