@@ -25,7 +25,15 @@ class SettingsActivity : Activity() {
 
     private lateinit var prefs: ImePrefs
 
+    private lateinit var textModeGroup: RadioGroup
     private lateinit var customText: EditText
+    private lateinit var charTableEdit: EditText
+    private lateinit var randomPoolEdit: EditText
+    private lateinit var hintsBox: CheckBox
+    private lateinit var fixedSection: View
+    private lateinit var tableSection: View
+    private lateinit var randomSection: View
+    private lateinit var hintsSection: View
     private lateinit var chainGroup: RadioGroup
     private lateinit var maxChain: EditText
     private lateinit var chordBox: CheckBox
@@ -65,21 +73,78 @@ class SettingsActivity : Activity() {
 
         // ---- 文字入力ギミック
         root.addView(header("② 安全なマスを開いたときに入力する文字"))
+        textModeGroup = RadioGroup(this)
+        val modeLabels = linkedMapOf(
+            TextMode.FIXED to "決まった文字",
+            TextMode.COORDINATE_TABLE to "座標に応じた文字（マスごとに文字表を割り当て）",
+            TextMode.COORDINATE_LABEL to "座標そのもの（例：B3）",
+            TextMode.RANDOM to "ランダムな文字",
+        )
+        for ((mode, text) in modeLabels) {
+            val rb = RadioButton(this).apply { id = View.generateViewId(); this.text = text; tag = mode }
+            textModeGroup.addView(rb)
+            if (mode == prefs.textMode) textModeGroup.check(rb.id)
+        }
+        root.addView(textModeGroup)
+
+        // 決まった文字
         customText = EditText(this).apply {
             setText(prefs.customText)
             hint = "例：ｗ / 草 / あ"
             setSingleLine()
         }
-        root.addView(customText)
-        val presets = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (preset in listOf("ｗ", "草", "あ", "💣", "ﾋﾟｴﾝ")) {
-            presets.addView(Button(this).apply {
-                text = preset
-                isAllCaps = false
-                setOnClickListener { customText.setText(preset) }
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        fixedSection = section(
+            label("入力する文字"),
+            customText,
+            presetRow(customText, listOf("ｗ", "草", "あ", "💣", "ﾋﾟｴﾝ")),
+        )
+        root.addView(fixedSection)
+
+        // 座標に応じた文字
+        charTableEdit = EditText(this).apply {
+            setText(prefs.charTable)
+            hint = "例：あいうえお…"
         }
-        root.addView(presets)
+        hintsBox = CheckBox(this).apply {
+            text = "閉じたマスに、開くと入力される文字を表示する"
+            isChecked = prefs.showCellHints
+        }
+        tableSection = section(
+            label("文字表：盤面の左上から右へ、1 マスずつ順番に割り当てます（足りなければ最初に戻ります）。" +
+                "カンマ区切りにすると「おはよう,こんにちは」のように複数文字も割り当てられます"),
+            charTableEdit,
+            presetRow(charTableEdit, linkedMapOf(
+                "五十音" to TextGimmick.DEFAULT_CHAR_TABLE,
+                "ABC" to "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                "数字" to "0123456789",
+                "絵文字" to "😀😂😍🤔😎😭😡👍🙏🎉🔥💯✨💣🚩",
+            )),
+        )
+        root.addView(tableSection)
+
+        // ランダムな文字
+        randomPoolEdit = EditText(this).apply {
+            setText(prefs.randomPool)
+            hint = "例：あいうえお…"
+        }
+        randomSection = section(
+            label("候補：開いたマスごとに、この中からランダムに 1 つ入力します（カンマ区切りで複数文字の候補も可）"),
+            randomPoolEdit,
+            presetRow(randomPoolEdit, linkedMapOf(
+                "ひらがな" to TextGimmick.DEFAULT_RANDOM_POOL,
+                "カタカナ" to "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン",
+                "英数字" to "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                "絵文字" to "😀😂😍🤔😎😭😡👍🙏🎉🔥💯✨💣🚩",
+            )),
+        )
+        root.addView(randomSection)
+
+        // 座標モード共通のヒント表示
+        hintsSection = section(hintsBox)
+        root.addView(hintsSection)
+
+        textModeGroup.setOnCheckedChangeListener { _, _ -> updateTextModeSections() }
+        updateTextModeSections()
 
         root.addView(label("連鎖オープン時の入力"))
         chainGroup = RadioGroup(this)
@@ -183,6 +248,10 @@ class SettingsActivity : Activity() {
 
     private fun save() {
         prefs.customText = customText.text.toString()
+        prefs.textMode = selectedTextMode()
+        prefs.charTable = charTableEdit.text.toString()
+        prefs.randomPool = randomPoolEdit.text.toString()
+        prefs.showCellHints = hintsBox.isChecked
         prefs.chainMode = chainGroup.findViewById<RadioButton>(chainGroup.checkedRadioButtonId)?.tag as? ChainMode
             ?: ChainMode.PER_CELL
         prefs.maxChainRepeat = maxChain.text.toString().toIntOrNull() ?: 0
@@ -204,6 +273,40 @@ class SettingsActivity : Activity() {
 
         prefs.boardHeightPercent = heightSeek.progress + ImePrefs.MIN_HEIGHT_PERCENT
     }
+
+    private fun selectedTextMode(): TextMode =
+        textModeGroup.findViewById<RadioButton>(textModeGroup.checkedRadioButtonId)?.tag as? TextMode ?: TextMode.FIXED
+
+    /** 選択中のモードに関係する設定だけを表示する */
+    private fun updateTextModeSections() {
+        val mode = selectedTextMode()
+        fixedSection.visibility = if (mode == TextMode.FIXED) View.VISIBLE else View.GONE
+        tableSection.visibility = if (mode == TextMode.COORDINATE_TABLE) View.VISIBLE else View.GONE
+        randomSection.visibility = if (mode == TextMode.RANDOM) View.VISIBLE else View.GONE
+        hintsSection.visibility =
+            if (mode == TextMode.COORDINATE_TABLE || mode == TextMode.COORDINATE_LABEL) View.VISIBLE else View.GONE
+    }
+
+    private fun section(vararg children: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        children.forEach { addView(it) }
+    }
+
+    private fun presetRow(target: EditText, presets: List<String>) =
+        presetRow(target, presets.associateWithTo(linkedMapOf<String, String>()) { it })
+
+    /** ボタンを押すと [target] に値を入れるプリセット行（キー＝ボタン表示、値＝入力内容） */
+    private fun presetRow(target: EditText, presets: Map<String, String>) =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            for ((label, value) in presets) {
+                addView(Button(this@SettingsActivity).apply {
+                    text = label
+                    isAllCaps = false
+                    setOnClickListener { target.setText(value) }
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+        }
 
     private fun updateHeightLabel() {
         heightLabel.text = "盤面の最大高さ：画面の ${heightSeek.progress + ImePrefs.MIN_HEIGHT_PERCENT}%"

@@ -116,10 +116,60 @@ class MinesweeperEngineTest {
     }
 
     @Test
-    fun textGimmick() {
-        assertEquals("ｗｗｗ", TextGimmick.textForOpenedCells(3, "ｗ", ChainMode.PER_CELL, 0))
-        assertEquals("草草", TextGimmick.textForOpenedCells(5, "草", ChainMode.PER_CELL, 2))
-        assertEquals("あ", TextGimmick.textForOpenedCells(5, "あ", ChainMode.ONCE, 0))
-        assertEquals("", TextGimmick.textForOpenedCells(0, "あ", ChainMode.PER_CELL, 0))
+    fun openReportsOpenedPositionsStartingWithTappedCell() {
+        val e = engine(5, 5, 1)
+        e.setMinesForTest(listOf(0 to 0))
+        val result = e.open(4, 4)
+        assertEquals(4 to 4, result.openedPositions.first())
+        assertEquals(24, result.openedPositions.toSet().size)
+    }
+
+    private val cells = listOf(0 to 0, 0 to 1, 1 to 0)
+
+    @Test
+    fun fixedTextRepeatsPerCell() {
+        val s = TextSettings(mode = TextMode.FIXED, customText = "ｗ")
+        assertEquals("ｗｗｗ", TextGimmick.textForOpened(cells, 9, s))
+        assertEquals("ｗｗ", TextGimmick.textForOpened(cells, 9, s.copy(maxRepeat = 2)))
+        assertEquals("ｗ", TextGimmick.textForOpened(cells, 9, s.copy(chainMode = ChainMode.ONCE)))
+        assertEquals("", TextGimmick.textForOpened(emptyList(), 9, s))
+    }
+
+    @Test
+    fun coordinateTableUsesCellPosition() {
+        val s = TextSettings(mode = TextMode.COORDINATE_TABLE, charTable = TextGimmick.splitUnits("あいうえお"))
+        // (0,0)=あ (0,1)=い (1,0)= 1*3+0=3 → え
+        assertEquals("あいえ", TextGimmick.textForOpened(cells, 3, s))
+        // 文字表が足りなければ先頭に戻る：(2,2) on 3 cols = 8 % 5 = 3 → え
+        assertEquals("え", TextGimmick.tableCharAt(2, 2, 3, s.charTable))
+        assertEquals("あ", TextGimmick.textForOpened(cells, 3, s.copy(chainMode = ChainMode.ONCE)))
+    }
+
+    @Test
+    fun coordinateLabel() {
+        assertEquals("A1", TextGimmick.coordinateLabel(0, 0))
+        assertEquals("B3", TextGimmick.coordinateLabel(2, 1))
+        assertEquals("Z10", TextGimmick.coordinateLabel(9, 25))
+        assertEquals("AA1", TextGimmick.coordinateLabel(0, 26))
+        val s = TextSettings(mode = TextMode.COORDINATE_LABEL)
+        assertEquals("A1B1A2", TextGimmick.textForOpened(cells, 9, s))
+    }
+
+    @Test
+    fun randomPicksFromPool() {
+        val pool = TextGimmick.splitUnits("abc")
+        val s = TextSettings(mode = TextMode.RANDOM, randomPool = pool)
+        val many = List(50) { 0 to 0 }
+        val text = TextGimmick.textForOpened(many, 9, s, Random(42))
+        assertEquals(50, text.length)
+        assertTrue(text.all { it.toString() in pool })
+        assertTrue(text.toSet().size > 1)
+    }
+
+    @Test
+    fun splitUnits() {
+        assertEquals(listOf("あ", "い", "😀"), TextGimmick.splitUnits("あ い😀"))
+        assertEquals(listOf("おはよう", "こんにちは"), TextGimmick.splitUnits("おはよう, こんにちは,"))
+        assertEquals(listOf("草", "ｗ"), TextGimmick.splitUnits("草、ｗ"))
     }
 }

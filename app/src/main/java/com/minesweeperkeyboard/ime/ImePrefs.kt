@@ -29,6 +29,25 @@ class ImePrefs(context: Context) {
         get() = sp.getString(KEY_CUSTOM_TEXT, DEFAULT_TEXT)!!.ifEmpty { DEFAULT_TEXT }
         set(v) = sp.edit().putString(KEY_CUSTOM_TEXT, v).apply()
 
+    var textMode: TextMode
+        get() = TextMode.fromKey(sp.getString(KEY_TEXT_MODE, null))
+        set(v) = sp.edit().putString(KEY_TEXT_MODE, v.key).apply()
+
+    /** 座標モードでマスに割り当てる文字表 */
+    var charTable: String
+        get() = sp.getString(KEY_CHAR_TABLE, null)?.takeIf { it.isNotBlank() } ?: TextGimmick.DEFAULT_CHAR_TABLE
+        set(v) = sp.edit().putString(KEY_CHAR_TABLE, v).apply()
+
+    /** ランダムモードの候補 */
+    var randomPool: String
+        get() = sp.getString(KEY_RANDOM_POOL, null)?.takeIf { it.isNotBlank() } ?: TextGimmick.DEFAULT_RANDOM_POOL
+        set(v) = sp.edit().putString(KEY_RANDOM_POOL, v).apply()
+
+    /** 座標（文字表）モードで、閉じたマスに入力される文字を表示する */
+    var showCellHints: Boolean
+        get() = sp.getBoolean(KEY_CELL_HINTS, true)
+        set(v) = sp.edit().putBoolean(KEY_CELL_HINTS, v).apply()
+
     var chainMode: ChainMode
         get() = ChainMode.fromKey(sp.getString(KEY_CHAIN_MODE, null))
         set(v) = sp.edit().putString(KEY_CHAIN_MODE, v.key).apply()
@@ -67,6 +86,15 @@ class ImePrefs(context: Context) {
         get() = sp.getInt(KEY_HEIGHT, 45)
         set(v) = sp.edit().putInt(KEY_HEIGHT, v.coerceIn(MIN_HEIGHT_PERCENT, MAX_HEIGHT_PERCENT)).apply()
 
+    fun textSettings() = TextSettings(
+        mode = textMode,
+        customText = customText,
+        charTable = TextGimmick.splitUnits(charTable),
+        randomPool = TextGimmick.splitUnits(randomPool),
+        chainMode = chainMode,
+        maxRepeat = maxChainRepeat,
+    )
+
     fun boardConfig(): BoardConfig {
         val d = difficulty
         return if (d == Difficulty.CUSTOM) {
@@ -79,12 +107,16 @@ class ImePrefs(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_TEXT = "ｗ"
+        const val DEFAULT_TEXT = TextGimmick.DEFAULT_FIXED_TEXT
         const val MIN_HEIGHT_PERCENT = 25
         const val MAX_HEIGHT_PERCENT = 70
 
         private const val KEY_CUSTOM_TEXT = "custom_text"
         private const val KEY_CHAIN_MODE = "chain_mode"
+        private const val KEY_TEXT_MODE = "text_mode"
+        private const val KEY_CHAR_TABLE = "char_table"
+        private const val KEY_RANDOM_POOL = "random_pool"
+        private const val KEY_CELL_HINTS = "show_cell_hints"
         private const val KEY_MAX_CHAIN = "max_chain_repeat"
         private const val KEY_CHORD = "chord_enabled"
         private const val KEY_HAPTICS = "haptics_enabled"

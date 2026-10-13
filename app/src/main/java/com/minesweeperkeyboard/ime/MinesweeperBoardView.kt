@@ -42,6 +42,13 @@ class MinesweeperBoardView(context: Context) : View(context) {
 
     var hapticsEnabled = true
 
+    /** 閉じたマスに薄く表示する文字（座標モードで「開くと何が入力されるか」を示す） */
+    var cellHint: ((row: Int, col: Int) -> String?)? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     private val density = resources.displayMetrics.density
     private val outerBorder = 3f * density
 
@@ -57,6 +64,11 @@ class MinesweeperBoardView(context: Context) : View(context) {
     private val gridPaint = Paint().apply { color = ClassicStyle.SHADOW }
     private val numberPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+    }
+
+    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ClassicStyle.SHADOW
         textAlign = Paint.Align.CENTER
     }
 
@@ -143,9 +155,22 @@ class MinesweeperBoardView(context: Context) : View(context) {
                 // 閉じたマス：凸型ボタン
                 canvas.drawRect(l, t, rt, b, bgPaint)
                 ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = true)
-                if (cell.isFlagged) ClassicStyle.drawFlag(canvas, cx, cy, cellSize)
+                if (cell.isFlagged) {
+                    ClassicStyle.drawFlag(canvas, cx, cy, cellSize)
+                } else {
+                    cellHint?.invoke(r, c)?.let { drawHint(canvas, it, cx, cy, cellSize - bevel * 2) }
+                }
             }
         }
+    }
+
+    private fun drawHint(canvas: Canvas, text: String, cx: Float, cy: Float, maxWidth: Float) {
+        if (text.isEmpty() || maxWidth <= 0f) return
+        hintPaint.textSize = cellSize * 0.5f
+        val w = hintPaint.measureText(text)
+        if (w > maxWidth) hintPaint.textSize *= maxWidth / w
+        val y = cy - (hintPaint.descent() + hintPaint.ascent()) / 2f
+        canvas.drawText(text, cx, y, hintPaint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
