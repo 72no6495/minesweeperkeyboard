@@ -6,26 +6,86 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 
+/** キーボードの配色 */
+enum class Theme(
+    val key: String,
+    val label: String,
+    val face: Int,
+    val highlight: Int,
+    val shadow: Int,
+    val text: Int,
+    val numbers: IntArray,
+) {
+    CLASSIC(
+        "classic", "クラシック（グレー）",
+        Color.rgb(0xC0, 0xC0, 0xC0), Color.WHITE, Color.rgb(0x80, 0x80, 0x80), Color.BLACK,
+        intArrayOf(
+            Color.TRANSPARENT,
+            Color.rgb(0x00, 0x00, 0xFF), // 1 青
+            Color.rgb(0x00, 0x80, 0x00), // 2 緑
+            Color.rgb(0xFF, 0x00, 0x00), // 3 赤
+            Color.rgb(0x00, 0x00, 0x80), // 4 紺
+            Color.rgb(0x80, 0x00, 0x00), // 5 えんじ
+            Color.rgb(0x00, 0x80, 0x80), // 6 青緑
+            Color.rgb(0x00, 0x00, 0x00), // 7 黒
+            Color.rgb(0x80, 0x80, 0x80), // 8 灰
+        ),
+    ),
+    DARK(
+        "dark", "ダーク",
+        Color.rgb(0x3A, 0x3A, 0x3A), Color.rgb(0x60, 0x60, 0x60), Color.rgb(0x18, 0x18, 0x18), Color.rgb(0xEE, 0xEE, 0xEE),
+        intArrayOf(
+            Color.TRANSPARENT,
+            Color.rgb(0x6E, 0x9C, 0xFF),
+            Color.rgb(0x5C, 0xD0, 0x5C),
+            Color.rgb(0xFF, 0x6B, 0x6B),
+            Color.rgb(0xB0, 0x8C, 0xFF),
+            Color.rgb(0xFF, 0xA0, 0x60),
+            Color.rgb(0x4E, 0xD6, 0xD6),
+            Color.rgb(0xF0, 0xF0, 0xF0),
+            Color.rgb(0xB0, 0xB0, 0xB0),
+        ),
+    ),
+    TEAL(
+        "teal", "ティール（Windows 98 の壁紙色）",
+        Color.rgb(0x9C, 0xCF, 0xCF), Color.rgb(0xE6, 0xFA, 0xFA), Color.rgb(0x00, 0x80, 0x80), Color.BLACK,
+        intArrayOf(
+            Color.TRANSPARENT,
+            Color.rgb(0x00, 0x00, 0xFF),
+            Color.rgb(0x00, 0x70, 0x00),
+            Color.rgb(0xE0, 0x00, 0x00),
+            Color.rgb(0x00, 0x00, 0x80),
+            Color.rgb(0x80, 0x00, 0x00),
+            Color.rgb(0x00, 0x50, 0x50),
+            Color.rgb(0x00, 0x00, 0x00),
+            Color.rgb(0x40, 0x40, 0x40),
+        ),
+    );
+
+    companion object {
+        fun fromKey(key: String?): Theme = entries.firstOrNull { it.key == key } ?: CLASSIC
+    }
+}
+
 /** Windows 95/98 風の配色と立体枠の描画ヘルパー */
 object ClassicStyle {
-    val FACE = Color.rgb(0xC0, 0xC0, 0xC0)
-    val HIGHLIGHT = Color.WHITE
-    val SHADOW = Color.rgb(0x80, 0x80, 0x80)
-    val DARK = Color.BLACK
+    var theme: Theme = Theme.CLASSIC
+        private set
+
+    /** ボタンの面 */
+    val FACE get() = theme.face
+    val HIGHLIGHT get() = theme.highlight
+    val SHADOW get() = theme.shadow
+    /** キーの文字の色 */
+    val DARK get() = theme.text
     val EXPLODED_BG = Color.RED
 
     /** 数字の色（インデックス = 数字） */
-    val NUMBER_COLORS = intArrayOf(
-        Color.TRANSPARENT,
-        Color.rgb(0x00, 0x00, 0xFF), // 1 青
-        Color.rgb(0x00, 0x80, 0x00), // 2 緑
-        Color.rgb(0xFF, 0x00, 0x00), // 3 赤
-        Color.rgb(0x00, 0x00, 0x80), // 4 紺
-        Color.rgb(0x80, 0x00, 0x00), // 5 えんじ
-        Color.rgb(0x00, 0x80, 0x80), // 6 青緑
-        Color.rgb(0x00, 0x00, 0x00), // 7 黒
-        Color.rgb(0x80, 0x80, 0x80), // 8 灰
-    )
+    val NUMBER_COLORS: IntArray get() = theme.numbers
+
+    fun applyTheme(t: Theme) {
+        theme = t
+    }
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
 
@@ -62,11 +122,11 @@ object ClassicStyle {
     }
 
     /** 地雷（黒丸＋トゲ＋白いハイライト） */
-    fun drawMine(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+    fun drawMine(canvas: Canvas, cx: Float, cy: Float, size: Float, alpha: Int = 255) {
         val radius = size * 0.28f
         fill.isAntiAlias = true
         fill.style = Paint.Style.FILL
-        fill.color = DARK
+        setColor(Color.BLACK, alpha)
         fill.strokeWidth = size * 0.08f
         val spike = size * 0.40f
         val d = spike * 0.72f
@@ -75,17 +135,17 @@ object ClassicStyle {
         canvas.drawLine(cx - d, cy - d, cx + d, cy + d, fill)
         canvas.drawLine(cx - d, cy + d, cx + d, cy - d, fill)
         canvas.drawCircle(cx, cy, radius, fill)
-        fill.color = HIGHLIGHT
+        setColor(Color.WHITE, alpha)
         canvas.drawRect(cx - radius * 0.55f, cy - radius * 0.55f, cx - radius * 0.15f, cy - radius * 0.15f, fill)
     }
 
     /** 旗（赤い三角＋黒いポールと台座） */
-    fun drawFlag(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+    fun drawFlag(canvas: Canvas, cx: Float, cy: Float, size: Float, alpha: Int = 255) {
         fill.isAntiAlias = true
         fill.style = Paint.Style.FILL
         val poleX = cx + size * 0.04f
         // 台座
-        fill.color = DARK
+        setColor(Color.BLACK, alpha)
         canvas.drawRect(cx - size * 0.26f, cy + size * 0.22f, cx + size * 0.26f, cy + size * 0.30f, fill)
         canvas.drawRect(cx - size * 0.14f, cy + size * 0.16f, cx + size * 0.18f, cy + size * 0.22f, fill)
         // ポール
@@ -96,8 +156,13 @@ object ClassicStyle {
         path.lineTo(cx - size * 0.28f, cy - size * 0.16f)
         path.lineTo(poleX + size * 0.03f, cy - size * 0.02f)
         path.close()
-        fill.color = Color.RED
+        setColor(Color.RED, alpha)
         canvas.drawPath(path, fill)
+    }
+
+    private fun setColor(color: Int, alpha: Int) {
+        fill.color = color
+        fill.alpha = alpha
     }
 
     /** 誤った旗の上に描く赤い × */
@@ -121,7 +186,7 @@ object ClassicStyle {
         canvas.drawCircle(cx, cy, r, fill)
         fill.style = Paint.Style.STROKE
         fill.strokeWidth = size * 0.04f
-        fill.color = DARK
+        fill.color = Color.BLACK
         canvas.drawCircle(cx, cy, r, fill)
 
         val eyeY = cy - r * 0.28f
@@ -183,7 +248,7 @@ object ClassicStyle {
     fun drawLedCounter(canvas: Canvas, rect: RectF, value: Int) {
         fill.isAntiAlias = false
         fill.style = Paint.Style.FILL
-        fill.color = DARK
+        fill.color = Color.BLACK
         canvas.drawRect(rect, fill)
 
         val v = value.coerceIn(-99, 999)

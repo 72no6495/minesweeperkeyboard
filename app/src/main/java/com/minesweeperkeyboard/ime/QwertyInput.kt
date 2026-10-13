@@ -26,30 +26,89 @@ enum class InputLanguage(val key: String, val label: String) {
     }
 }
 
-/** 4 行 × 10 列の QWERTY 盤面 */
-object QwertyLayout {
-    val ROWS = listOf(
-        "1234567890",
-        "qwertyuiop",
-        "asdfghjkl-",
-        "zxcvbnm,.?",
-    )
-    val rows: Int get() = ROWS.size
-    val cols: Int get() = ROWS[0].length
+/** 普通のキーボードモードでキーを長押ししたときの動作 */
+enum class LongPressAction(val key: String, val label: String) {
+    SYMBOL("symbol", "記号・数字を入力（記号モードで同じ位置にある文字）"),
+    FLAG("flag", "裏のマインスイーパーに旗を立てる"),
+    NONE("none", "なし（長く押しても普通に入力）");
 
-    fun keyAt(r: Int, c: Int): Char = ROWS[r][c]
+    companion object {
+        fun fromKey(key: String?): LongPressAction = entries.firstOrNull { it.key == key } ?: SYMBOL
+    }
+}
+
+/** 英字の並び（どれも 10 列） */
+enum class KeyLayout(val key: String, val label: String, val letterRows: List<String>) {
+    QWERTY("qwerty", "QWERTY", listOf("qwertyuiop", "asdfghjkl-", "zxcvbnm,.?")),
+    QWERTZ("qwertz", "QWERTZ（ドイツ語圏）", listOf("qwertzuiop", "asdfghjkl-", "yxcvbnm,.?")),
+    AZERTY("azerty", "AZERTY（フランス語圏）", listOf("azertyuiop", "qsdfghjklm", "wxcvbn-,.?"));
+
+    companion object {
+        fun fromKey(key: String?): KeyLayout = entries.firstOrNull { it.key == key } ?: QWERTY
+    }
+}
+
+/** 日本語入力の句読点 */
+enum class PunctuationStyle(val key: String, val comma: String, val period: String) {
+    TOUTEN_KUTEN("touten_kuten", "、", "。"),
+    COMMA_PERIOD("comma_period", "，", "．"),
+    COMMA_KUTEN("comma_kuten", "，", "。");
+
+    val label: String get() = comma + period
+
+    companion object {
+        fun fromKey(key: String?): PunctuationStyle = entries.firstOrNull { it.key == key } ?: TOUTEN_KUTEN
+    }
+}
+
+/**
+ * QWERTY 系の盤面（10 列 × 3〜4 行）。数字の行は設定で出し入れできる。
+ * 記号モードでは同じ位置に [SYMBOL_ROWS] の記号が並ぶ。
+ */
+class KeyGrid(val layout: KeyLayout = KeyLayout.QWERTY, val numberRow: Boolean = true) {
+
+    val rows: List<String> = (if (numberRow) listOf(NUMBER_ROW) else emptyList()) + layout.letterRows
+    private val symbolRows: List<String> = SYMBOL_ROWS.take(rows.size)
+
+    val rowCount: Int get() = rows.size
+    val colCount: Int get() = COLS
+
+    fun keyAt(r: Int, c: Int): Char = rows[r][c]
+
+    fun symbolAt(r: Int, c: Int): Char = symbolRows[r][c]
 
     /** キーに表示する文字 */
-    fun label(r: Int, c: Int, language: InputLanguage, shift: Boolean): String {
+    fun label(
+        r: Int, c: Int, language: InputLanguage, shift: Boolean, symbols: Boolean,
+        punctuation: PunctuationStyle = PunctuationStyle.TOUTEN_KUTEN,
+    ): String {
+        if (symbols) return symbolAt(r, c).toString()
         val k = keyAt(r, c)
         return when (language) {
             InputLanguage.ENGLISH -> if (shift) k.uppercaseChar().toString() else k.toString()
-            InputLanguage.ROMAJI -> JA_PUNCTUATION[k] ?: k.toString()
+            InputLanguage.ROMAJI -> japanesePunctuation(k, punctuation) ?: k.toString()
         }
     }
 
-    /** ローマ字入力時の記号の置き換え（"-" は変換表で「ー」になる） */
-    val JA_PUNCTUATION = mapOf('-' to "ー", ',' to "、", '.' to "。", '?' to "？")
+    companion object {
+        const val COLS = 10
+        const val NUMBER_ROW = "1234567890"
+        val SYMBOL_ROWS = listOf(
+            "1234567890",
+            "!@#$%&*()?",
+            "-_=+;:'\"/,",
+            "<>[]{}~^|\\",
+        )
+
+        /** ローマ字入力時の記号の置き換え（"-" は変換表で「ー」になる） */
+        fun japanesePunctuation(key: Char, style: PunctuationStyle): String? = when (key) {
+            '-' -> "ー"
+            ',' -> style.comma
+            '.' -> style.period
+            '?' -> "？"
+            else -> null
+        }
+    }
 }
 
 /**
@@ -65,6 +124,8 @@ class Composer {
             if (field != value) clear()
             field = value
         }
+
+    var punctuation: PunctuationStyle = PunctuationStyle.TOUTEN_KUTEN
 
     private val english = StringBuilder()
     private val romaji = RomajiConverter()
@@ -101,7 +162,7 @@ class Composer {
                 romaji.input(key)
                 ""
             } else {
-                finish() + (QwertyLayout.JA_PUNCTUATION[key] ?: key.toString())
+                finish() + (KeyGrid.japanesePunctuation(key, punctuation) ?: key.toString())
             }
     }
 

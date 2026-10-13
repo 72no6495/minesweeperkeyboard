@@ -51,6 +51,8 @@ class StatusBarView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
+        bg.color = ClassicStyle.FACE
+        candidatePaint.color = ClassicStyle.DARK
         canvas.drawRect(0f, 0f, w, h, bg)
         // 凹んだパネル
         ClassicStyle.drawBevel(canvas, border, border, w - border, h - border, border * 0.7f, raised = false)
@@ -207,6 +209,8 @@ class ClassicButton(context: Context, label: String) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
         val down = isPressed || isToggled
+        bgPaint.color = ClassicStyle.FACE
+        textPaint.color = ClassicStyle.DARK
         canvas.drawRect(0f, 0f, w, h, bgPaint)
         // 外側の黒枠＋立体枠
         ClassicStyle.drawBevel(canvas, 0f, 0f, w, h, density, raised = !down)

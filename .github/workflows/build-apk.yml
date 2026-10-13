@@ -28,6 +28,15 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - uses: actions/cache@v4
+        with:
+          path: build/mozc-dictionary
+          key: mozc-dictionary-${{ hashFiles('tools/build_ja_dictionary.py') }}
+
+      # Mozc のオープンソース辞書から予測変換用の日本語辞書を作って assets に入れる
+      - name: Build Japanese dictionary
+        run: python3 tools/build_ja_dictionary.py
+
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
 

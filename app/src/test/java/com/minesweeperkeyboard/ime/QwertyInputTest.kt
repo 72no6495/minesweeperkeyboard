@@ -115,20 +115,73 @@ class QwertyInputTest {
     }
 
     @Test
-    fun qwertyLayout() {
-        assertEquals(4, QwertyLayout.rows)
-        assertEquals(10, QwertyLayout.cols)
-        assertTrue(QwertyLayout.ROWS.all { it.length == QwertyLayout.cols })
-        assertEquals('q', QwertyLayout.keyAt(1, 0))
-        assertEquals("Q", QwertyLayout.label(1, 0, InputLanguage.ENGLISH, shift = true))
-        assertEquals("ー", QwertyLayout.label(2, 9, InputLanguage.ROMAJI, shift = false))
-        assertEquals("、", QwertyLayout.label(3, 7, InputLanguage.ROMAJI, shift = false))
+    fun keyGrid() {
+        val g = KeyGrid()
+        assertEquals(4, g.rowCount)
+        assertEquals(10, g.colCount)
+        assertTrue(g.rows.all { it.length == g.colCount })
+        assertEquals('q', g.keyAt(1, 0))
+        assertEquals("Q", g.label(1, 0, InputLanguage.ENGLISH, shift = true, symbols = false))
+        assertEquals("ー", g.label(2, 9, InputLanguage.ROMAJI, shift = false, symbols = false))
+        assertEquals("、", g.label(3, 7, InputLanguage.ROMAJI, shift = false, symbols = false))
+        assertEquals("，", g.label(3, 7, InputLanguage.ROMAJI, false, false, PunctuationStyle.COMMA_PERIOD))
+        assertEquals("!", g.label(1, 0, InputLanguage.ENGLISH, shift = false, symbols = true))
+    }
+
+    @Test
+    fun keyLayoutsAndNumberRow() {
+        for (layout in KeyLayout.entries) {
+            for (numberRow in listOf(true, false)) {
+                val g = KeyGrid(layout, numberRow)
+                assertEquals(if (numberRow) 4 else 3, g.rowCount)
+                assertTrue(g.rows.all { it.length == KeyGrid.COLS })
+                // ローマ字の「ー」と句読点が打てる
+                val keys = g.rows.joinToString("")
+                assertTrue("$layout has -", '-' in keys)
+                assertTrue(',' in keys && '.' in keys)
+                // 26 文字すべてある
+                assertEquals(26, keys.filter { it.isLetter() }.toSet().size)
+                for (r in 0 until g.rowCount) for (c in 0 until g.colCount) g.symbolAt(r, c)
+            }
+        }
+        // 数字の行がなくても記号モードで数字が打てる
+        assertEquals('1', KeyGrid(numberRow = false).symbolAt(0, 0))
+        assertEquals('z', KeyGrid(KeyLayout.QWERTZ).keyAt(1, 5))
+        assertEquals('a', KeyGrid(KeyLayout.AZERTY).keyAt(1, 0))
+    }
+
+    @Test
+    fun composerPunctuationStyle() {
+        val c = Composer()
+        c.language = InputLanguage.ROMAJI
+        c.punctuation = PunctuationStyle.COMMA_PERIOD
+        "a".forEach { c.type(it, false) }
+        assertEquals("あ．", c.type('.', false))
+    }
+
+    @Test
+    fun learning() {
+        val m = LearningModel(maxEntries = 3)
+        m.learn("かんじ", "漢字")
+        m.learn("かんじ", "漢字")
+        m.learn("かんじ", "感じ")
+        m.learn("かんじょう", "感情")
+        assertEquals(listOf("漢字", "感じ", "感情"), m.lookup("かんじ"))
+        assertEquals(listOf("感情"), m.lookup("かんじょ"))
+        // 上限を超えたら一番長く使っていないものから消える
+        m.learn("き", "木")
+        assertEquals(3, m.size())
+        val copy = LearningModel().apply { load(m.serialize()) }
+        assertEquals(m.lookup("か"), copy.lookup("か"))
+        m.clear()
+        assertTrue(m.lookup("かんじ").isEmpty())
     }
 
     @Test
     fun qwertyBoardFitsEngine() {
-        val e = MinesweeperEngine(QwertyLayout.rows, QwertyLayout.cols, 6)
-        assertEquals(4, e.rows)
+        val g = KeyGrid(numberRow = false)
+        val e = MinesweeperEngine(g.rowCount, g.colCount, 6)
+        assertEquals(3, e.rows)
         assertEquals(10, e.cols)
         assertFalse(e.open(1, 4).exploded)
     }
