@@ -16,8 +16,8 @@ class MinesweeperEngine(
     private val random: Random = Random.Default,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    val rows: Int = rows.coerceIn(MIN_SIZE, MAX_SIZE)
-    val cols: Int = cols.coerceIn(MIN_SIZE, MAX_SIZE)
+    val rows: Int = rows.coerceIn(MIN_ENGINE_SIZE, MAX_SIZE)
+    val cols: Int = cols.coerceIn(MIN_ENGINE_SIZE, MAX_SIZE)
     val mineCount: Int = mines.coerceIn(1, this.rows * this.cols - 1)
 
     enum class State { READY, PLAYING, WON, LOST }
@@ -224,7 +224,10 @@ class MinesweeperEngine(
     }
 
     companion object {
+        /** 設定画面で指定できる最小サイズ */
         const val MIN_SIZE = 5
+        /** エンジンが扱える最小サイズ（QWERTY 盤面は 4 行） */
+        const val MIN_ENGINE_SIZE = 2
         const val MAX_SIZE = 30
     }
 }

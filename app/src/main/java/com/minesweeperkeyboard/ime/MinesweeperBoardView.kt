@@ -3,6 +3,7 @@ package com.minesweeperkeyboard.ime
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.view.GestureDetector
@@ -25,6 +26,15 @@ class MinesweeperBoardView(context: Context) : View(context) {
         fun onBoardPressChanged(pressed: Boolean)
     }
 
+    enum class Style {
+        /** 正方形のマス（クラシック） */
+        CLASSIC,
+        /** 横長のキー型のマス。開いたマスにも [keyLabel] を表示し、数字は隅に小さく */
+        KEYS,
+        /** 普通のキーボードとして描き、ゲームの状態は上にうっすら重ねる */
+        GHOST,
+    }
+
     var engine: MinesweeperEngine? = null
         set(value) {
             field = value
@@ -33,6 +43,13 @@ class MinesweeperBoardView(context: Context) : View(context) {
         }
 
     var listener: Listener? = null
+
+    var style: Style = Style.CLASSIC
+        set(value) {
+            field = value
+            requestLayout()
+            invalidate()
+        }
 
     var maxHeightRatio: Float = 0.45f
         set(value) {
@@ -49,11 +66,27 @@ class MinesweeperBoardView(context: Context) : View(context) {
             invalidate()
         }
 
+    /** キー型・ゴースト表示でマスに表示するキーの文字 */
+    var keyLabel: ((row: Int, col: Int) -> String)? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** ゴースト表示でゲームを描くか（false なら普通のキーボードだけ） */
+    var ghostGameVisible = true
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     private val density = resources.displayMetrics.density
     private val outerBorder = 3f * density
+    private val keyHeight = 50f * density
 
-    private var cellSize = 0f
-    private val boardLeft: Float get() = (width - cellSize * (engine?.cols ?: 0)) / 2f
+    private var cellW = 0f
+    private var cellH = 0f
+    private val boardLeft: Float get() = (width - cellW * (engine?.cols ?: 0)) / 2f
     private val boardTop: Float get() = outerBorder
 
     /** 押下中のマス（閉じたマスを凹ませて表示する） */
@@ -66,11 +99,16 @@ class MinesweeperBoardView(context: Context) : View(context) {
         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
-
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ClassicStyle.SHADOW
         textAlign = Paint.Align.CENTER
     }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    private val ghostOpenPaint = Paint().apply { color = Color.argb(70, 0x40, 0x40, 0x40) }
+    private val ghostExplodedPaint = Paint().apply { color = Color.argb(90, 0xFF, 0x00, 0x00) }
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent): Boolean = true
@@ -99,14 +137,20 @@ class MinesweeperBoardView(context: Context) : View(context) {
         val maxHeight = resources.displayMetrics.heightPixels * maxHeightRatio
         val availW = width - outerBorder * 2
         val availH = maxHeight - outerBorder * 2
-        cellSize = max(1f, min(availW / e.cols, availH / e.rows)).toInt().toFloat()
-        val height = (cellSize * e.rows + outerBorder * 2).toInt()
+        if (style == Style.CLASSIC) {
+            cellW = max(1f, min(availW / e.cols, availH / e.rows)).toInt().toFloat()
+            cellH = cellW
+        } else {
+            cellW = max(1f, availW / e.cols).toInt().toFloat()
+            cellH = max(1f, min(keyHeight, availH / e.rows)).toInt().toFloat()
+        }
+        val height = (cellH * e.rows + outerBorder * 2).toInt()
         setMeasuredDimension(width, height)
     }
 
     override fun onDraw(canvas: Canvas) {
         val e = engine ?: return
-        val boardW = cellSize * e.cols
+        val boardW = cellW * e.cols
         val boardLeft = boardLeft
         val boardTop = boardTop
 
@@ -117,56 +161,129 @@ class MinesweeperBoardView(context: Context) : View(context) {
             outerBorder, raised = false,
         )
 
-        numberPaint.textSize = cellSize * 0.72f
-        val bevel = max(1f, (cellSize * 0.12f).toInt().toFloat())
-        val textOffset = (numberPaint.descent() + numberPaint.ascent()) / 2f
+        val unit = min(cellW, cellH)
+        val bevel = max(1f, (unit * 0.12f).toInt().toFloat())
 
         for (r in 0 until e.rows) for (c in 0 until e.cols) {
-            val cell = e.cell(r, c)
-            val l = boardLeft + c * cellSize
-            val t = boardTop + r * cellSize
-            val rt = l + cellSize
-            val b = t + cellSize
-            val cx = l + cellSize / 2f
-            val cy = t + cellSize / 2f
-            val revealMine = cell.isMine && e.state == MinesweeperEngine.State.LOST && !cell.isFlagged
-            val looksOpen = cell.isOpen || revealMine || cell.isWrongFlag ||
-                (r == pressedRow && c == pressedCol && !cell.isFlagged && !e.isGameOver)
-
-            if (looksOpen) {
-                // 開いたマス：フラットなグレー＋左上の灰色の線
-                bgPaint.color = if (cell.isExploded) ClassicStyle.EXPLODED_BG else ClassicStyle.FACE
-                canvas.drawRect(l, t, rt, b, bgPaint)
-                bgPaint.color = ClassicStyle.FACE
-                canvas.drawRect(l, t, rt, t + 1f, gridPaint)
-                canvas.drawRect(l, t, l + 1f, b, gridPaint)
-                when {
-                    cell.isWrongFlag -> {
-                        ClassicStyle.drawMine(canvas, cx, cy, cellSize)
-                        ClassicStyle.drawCross(canvas, cx, cy, cellSize)
-                    }
-                    revealMine || cell.isExploded -> ClassicStyle.drawMine(canvas, cx, cy, cellSize)
-                    cell.isOpen && cell.adjacentMines > 0 -> {
-                        numberPaint.color = ClassicStyle.NUMBER_COLORS[cell.adjacentMines]
-                        canvas.drawText(cell.adjacentMines.toString(), cx, cy - textOffset, numberPaint)
-                    }
-                }
-            } else {
-                // 閉じたマス：凸型ボタン
-                canvas.drawRect(l, t, rt, b, bgPaint)
-                ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = true)
-                if (cell.isFlagged) {
-                    ClassicStyle.drawFlag(canvas, cx, cy, cellSize)
-                } else {
-                    cellHint?.invoke(r, c)?.let { drawHint(canvas, it, cx, cy, cellSize - bevel * 2) }
-                }
+            val l = boardLeft + c * cellW
+            val t = boardTop + r * cellH
+            when (style) {
+                Style.CLASSIC, Style.KEYS -> drawGameCell(canvas, e, r, c, l, t, bevel)
+                Style.GHOST -> drawGhostCell(canvas, e, r, c, l, t, bevel)
             }
         }
     }
 
+    private fun drawGameCell(canvas: Canvas, e: MinesweeperEngine, r: Int, c: Int, l: Float, t: Float, bevel: Float) {
+        val cell = e.cell(r, c)
+        val rt = l + cellW
+        val b = t + cellH
+        val cx = l + cellW / 2f
+        val cy = t + cellH / 2f
+        val unit = min(cellW, cellH)
+        val keys = style == Style.KEYS
+        val label = if (keys) keyLabel?.invoke(r, c) else null
+        val revealMine = cell.isMine && e.state == MinesweeperEngine.State.LOST && !cell.isFlagged
+        val looksOpen = cell.isOpen || revealMine || cell.isWrongFlag ||
+            (r == pressedRow && c == pressedCol && !cell.isFlagged && !e.isGameOver)
+
+        if (looksOpen) {
+            // 開いたマス：フラットなグレー＋左上の灰色の線
+            bgPaint.color = if (cell.isExploded) ClassicStyle.EXPLODED_BG else ClassicStyle.FACE
+            canvas.drawRect(l, t, rt, b, bgPaint)
+            bgPaint.color = ClassicStyle.FACE
+            canvas.drawRect(l, t, rt, t + 1f, gridPaint)
+            canvas.drawRect(l, t, l + 1f, b, gridPaint)
+            when {
+                cell.isWrongFlag -> {
+                    ClassicStyle.drawMine(canvas, cx, cy, unit)
+                    ClassicStyle.drawCross(canvas, cx, cy, unit)
+                }
+                revealMine || cell.isExploded -> ClassicStyle.drawMine(canvas, cx, cy, unit)
+                else -> {
+                    if (cell.isOpen && cell.adjacentMines > 0) {
+                        if (keys) drawCornerNumber(canvas, cell.adjacentMines, rt, t, 255)
+                        else drawCenterNumber(canvas, cell.adjacentMines, cx, cy)
+                    }
+                    label?.let { drawLabel(canvas, it, cx, cy, ClassicStyle.SHADOW) }
+                }
+            }
+        } else {
+            // 閉じたマス：凸型ボタン
+            canvas.drawRect(l, t, rt, b, bgPaint)
+            ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = true)
+            when {
+                cell.isFlagged -> ClassicStyle.drawFlag(canvas, cx, cy, unit)
+                label != null -> drawLabel(canvas, label, cx, cy, ClassicStyle.DARK)
+                else -> cellHint?.invoke(r, c)?.let { drawHint(canvas, it, cx, cy, cellW - bevel * 2) }
+            }
+        }
+    }
+
+    /** 普通のキー＋うっすらゲームの状態 */
+    private fun drawGhostCell(canvas: Canvas, e: MinesweeperEngine, r: Int, c: Int, l: Float, t: Float, bevel: Float) {
+        val cell = e.cell(r, c)
+        val rt = l + cellW
+        val b = t + cellH
+        val cx = l + cellW / 2f
+        val cy = t + cellH / 2f
+        val unit = min(cellW, cellH)
+        val pressed = r == pressedRow && c == pressedCol
+
+        canvas.drawRect(l, t, rt, b, bgPaint)
+        ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = !pressed)
+
+        if (ghostGameVisible) {
+            val revealMine = cell.isMine && e.state == MinesweeperEngine.State.LOST && !cell.isFlagged
+            when {
+                cell.isExploded -> canvas.drawRect(l, t, rt, b, ghostExplodedPaint)
+                cell.isOpen || revealMine -> canvas.drawRect(l + bevel, t + bevel, rt - bevel, b - bevel, ghostOpenPaint)
+            }
+            val alpha = GHOST_ALPHA
+            when {
+                cell.isFlagged -> withAlpha(canvas, l, t, rt, b, alpha) { ClassicStyle.drawFlag(canvas, cx, cy, unit) }
+                revealMine || cell.isExploded -> withAlpha(canvas, l, t, rt, b, alpha) { ClassicStyle.drawMine(canvas, cx, cy, unit) }
+                cell.isOpen && cell.adjacentMines > 0 -> drawCornerNumber(canvas, cell.adjacentMines, rt, t, alpha)
+            }
+        }
+        keyLabel?.invoke(r, c)?.let { drawLabel(canvas, it, cx, cy, ClassicStyle.DARK) }
+    }
+
+    private inline fun withAlpha(canvas: Canvas, l: Float, t: Float, r: Float, b: Float, alpha: Int, draw: () -> Unit) {
+        val save = canvas.saveLayerAlpha(l, t, r, b, alpha)
+        draw()
+        canvas.restoreToCount(save)
+    }
+
+    private fun drawCenterNumber(canvas: Canvas, n: Int, cx: Float, cy: Float) {
+        numberPaint.textSize = cellW * 0.72f
+        numberPaint.color = ClassicStyle.NUMBER_COLORS[n]
+        numberPaint.textAlign = Paint.Align.CENTER
+        canvas.drawText(n.toString(), cx, cy - (numberPaint.descent() + numberPaint.ascent()) / 2f, numberPaint)
+    }
+
+    /** キー型のマスでは数字を右上に小さく描く */
+    private fun drawCornerNumber(canvas: Canvas, n: Int, right: Float, top: Float, alpha: Int) {
+        numberPaint.textSize = cellH * 0.34f
+        numberPaint.color = ClassicStyle.NUMBER_COLORS[n]
+        numberPaint.alpha = alpha
+        numberPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText(n.toString(), right - cellW * 0.08f, top - numberPaint.ascent() + cellH * 0.04f, numberPaint)
+        numberPaint.alpha = 255
+    }
+
+    private fun drawLabel(canvas: Canvas, text: String, cx: Float, cy: Float, color: Int) {
+        labelPaint.color = color
+        labelPaint.textSize = min(cellH * 0.45f, cellW * 0.6f)
+        val w = labelPaint.measureText(text)
+        val maxW = cellW * 0.8f
+        if (w > maxW) labelPaint.textSize *= maxW / w
+        canvas.drawText(text, cx, cy - (labelPaint.descent() + labelPaint.ascent()) / 2f, labelPaint)
+    }
+
     private fun drawHint(canvas: Canvas, text: String, cx: Float, cy: Float, maxWidth: Float) {
         if (text.isEmpty() || maxWidth <= 0f) return
-        hintPaint.textSize = cellSize * 0.5f
+        hintPaint.textSize = cellH * 0.5f
         val w = hintPaint.measureText(text)
         if (w > maxWidth) hintPaint.textSize *= maxWidth / w
         val y = cy - (hintPaint.descent() + hintPaint.ascent()) / 2f
@@ -210,10 +327,15 @@ class MinesweeperBoardView(context: Context) : View(context) {
 
     private fun cellAt(x: Float, y: Float): Pair<Int, Int>? {
         val e = engine ?: return null
-        if (cellSize <= 0f) return null
-        val c = ((x - boardLeft) / cellSize).toInt()
-        val r = ((y - boardTop) / cellSize).toInt()
+        if (cellW <= 0f || cellH <= 0f) return null
         if (x < boardLeft || y < boardTop) return null
+        val c = ((x - boardLeft) / cellW).toInt()
+        val r = ((y - boardTop) / cellH).toInt()
         return if (e.inBounds(r, c)) r to c else null
+    }
+
+    companion object {
+        /** ゴースト表示でゲームを重ねる不透明度（0〜255） */
+        private const val GHOST_ALPHA = 90
     }
 }

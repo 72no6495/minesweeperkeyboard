@@ -25,6 +25,61 @@ class ImePrefs(context: Context) {
     private val sp: SharedPreferences =
         context.applicationContext.getSharedPreferences("minesweeper_ime", Context.MODE_PRIVATE)
 
+    // ---- キーボードモード
+
+    var keyboardMode: KeyboardMode
+        get() = KeyboardMode.fromKey(sp.getString(KEY_KEYBOARD_MODE, null))
+        set(v) = sp.edit().putString(KEY_KEYBOARD_MODE, v.key).apply()
+
+    /** モード切替キーで切り替える対象（空にはならない） */
+    var enabledModes: Set<KeyboardMode>
+        get() = keySet(KEY_ENABLED_MODES, KeyboardMode.entries.map { it.key })
+            .map { KeyboardMode.fromKey(it) }.toSet().ifEmpty { setOf(KeyboardMode.CLASSIC) }
+        set(v) = sp.edit().putStringSet(KEY_ENABLED_MODES, v.map { it.key }.toSet()).apply()
+
+    var inputLanguage: InputLanguage
+        get() = InputLanguage.fromKey(sp.getString(KEY_LANGUAGE, null))
+        set(v) = sp.edit().putString(KEY_LANGUAGE, v.key).apply()
+
+    /** 言語切替キーで切り替える入力言語（空にはならない） */
+    var enabledLanguages: Set<InputLanguage>
+        get() = keySet(KEY_ENABLED_LANGUAGES, InputLanguage.entries.map { it.key })
+            .map { InputLanguage.fromKey(it) }.toSet().ifEmpty { setOf(InputLanguage.ROMAJI) }
+        set(v) = sp.edit().putStringSet(KEY_ENABLED_LANGUAGES, v.map { it.key }.toSet()).apply()
+
+    var predictionEnabled: Boolean
+        get() = sp.getBoolean(KEY_PREDICTION, true)
+        set(v) = sp.edit().putBoolean(KEY_PREDICTION, v).apply()
+
+    /** 予測変換の辞書（1 行 1 語「よみ,単語」） */
+    var dictionaryText: String
+        get() = sp.getString(KEY_DICTIONARY, null) ?: UserDictionary.SAMPLE
+        set(v) = sp.edit().putString(KEY_DICTIONARY, v).apply()
+
+    /** QWERTY 盤面でプレイするときの地雷の数 */
+    var qwertyMines: Int
+        get() = sp.getInt(KEY_QWERTY_MINES, 6)
+        set(v) = sp.edit().putInt(KEY_QWERTY_MINES, v.coerceIn(1, QWERTY_MAX_MINES)).apply()
+
+    /** 普通のキーボードモードで裏のマインスイーパーを動かすか */
+    var backgroundGameEnabled: Boolean
+        get() = sp.getBoolean(KEY_BG_GAME, true)
+        set(v) = sp.edit().putBoolean(KEY_BG_GAME, v).apply()
+
+    var backgroundMines: Int
+        get() = sp.getInt(KEY_BG_MINES, 6)
+        set(v) = sp.edit().putInt(KEY_BG_MINES, v.coerceIn(1, QWERTY_MAX_MINES)).apply()
+
+    /** 裏のマインスイーパーの結果（ゲームオーバー／クリア）も入力するか */
+    var backgroundResults: Boolean
+        get() = sp.getBoolean(KEY_BG_RESULTS, false)
+        set(v) = sp.edit().putBoolean(KEY_BG_RESULTS, v).apply()
+
+    private fun keySet(key: String, default: List<String>): Set<String> =
+        sp.getStringSet(key, null) ?: default.toSet()
+
+    // ---- クラシック盤面の文字入力
+
     var customText: String
         get() = sp.getString(KEY_CUSTOM_TEXT, DEFAULT_TEXT)!!.ifEmpty { DEFAULT_TEXT }
         set(v) = sp.edit().putString(KEY_CUSTOM_TEXT, v).apply()
@@ -95,6 +150,13 @@ class ImePrefs(context: Context) {
         maxRepeat = maxChainRepeat,
     )
 
+    /** モードごとの盤面（QWERTY 系は 4×10 固定） */
+    fun boardConfigFor(mode: KeyboardMode): BoardConfig = when (mode) {
+        KeyboardMode.CLASSIC -> boardConfig()
+        KeyboardMode.QWERTY_GAME -> BoardConfig(QwertyLayout.rows, QwertyLayout.cols, qwertyMines)
+        KeyboardMode.QWERTY_BACKGROUND -> BoardConfig(QwertyLayout.rows, QwertyLayout.cols, backgroundMines)
+    }
+
     fun boardConfig(): BoardConfig {
         val d = difficulty
         return if (d == Difficulty.CUSTOM) {
@@ -108,10 +170,22 @@ class ImePrefs(context: Context) {
 
     companion object {
         const val DEFAULT_TEXT = TextGimmick.DEFAULT_FIXED_TEXT
+        /** QWERTY 盤面（40 マス）の地雷の上限 */
+        const val QWERTY_MAX_MINES = 20
         const val MIN_HEIGHT_PERCENT = 25
         const val MAX_HEIGHT_PERCENT = 70
 
         private const val KEY_CUSTOM_TEXT = "custom_text"
+        private const val KEY_KEYBOARD_MODE = "keyboard_mode"
+        private const val KEY_ENABLED_MODES = "enabled_modes"
+        private const val KEY_LANGUAGE = "input_language"
+        private const val KEY_ENABLED_LANGUAGES = "enabled_languages"
+        private const val KEY_PREDICTION = "prediction_enabled"
+        private const val KEY_DICTIONARY = "dictionary"
+        private const val KEY_QWERTY_MINES = "qwerty_mines"
+        private const val KEY_BG_GAME = "background_game"
+        private const val KEY_BG_MINES = "background_mines"
+        private const val KEY_BG_RESULTS = "background_results"
         private const val KEY_CHAIN_MODE = "chain_mode"
         private const val KEY_TEXT_MODE = "text_mode"
         private const val KEY_CHAR_TABLE = "char_table"
