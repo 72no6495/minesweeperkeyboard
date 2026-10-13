@@ -35,11 +35,13 @@ class MinesweeperEngine(
 
     /** 1回の操作（タップ／コード）の結果 */
     data class MoveResult(
-        /** この操作で新たに開いた安全マスの数 */
-        val openedCells: Int,
+        /** この操作で新たに開いた安全マス（開いた順） */
+        val openedPositions: List<Pair<Int, Int>> = emptyList(),
         val exploded: Boolean = false,
         val won: Boolean = false,
     ) {
+        /** この操作で新たに開いた安全マスの数 */
+        val openedCells: Int get() = openedPositions.size
         val isNoop: Boolean get() = openedCells == 0 && !exploded && !won
     }
 
@@ -78,9 +80,9 @@ class MinesweeperEngine(
 
     /** マスを開く */
     fun open(r: Int, c: Int): MoveResult {
-        if (isGameOver || !inBounds(r, c)) return MoveResult(0)
+        if (isGameOver || !inBounds(r, c)) return MoveResult()
         val target = cells[r][c]
-        if (target.isOpen || target.isFlagged) return MoveResult(0)
+        if (target.isOpen || target.isFlagged) return MoveResult()
 
         if (state == State.READY) {
             placeMines(r, c)
@@ -91,10 +93,11 @@ class MinesweeperEngine(
         if (target.isMine) {
             target.isExploded = true
             lose()
-            return MoveResult(0, exploded = true)
+            return MoveResult(exploded = true)
         }
 
-        val opened = floodOpen(r, c)
+        val opened = ArrayList<Pair<Int, Int>>()
+        floodOpen(r, c, opened)
         return MoveResult(opened, won = checkWin())
     }
 
@@ -103,13 +106,13 @@ class MinesweeperEngine(
      * （クラシック版の「両クリック」）。
      */
     fun chord(r: Int, c: Int): MoveResult {
-        if (state != State.PLAYING || !inBounds(r, c)) return MoveResult(0)
+        if (state != State.PLAYING || !inBounds(r, c)) return MoveResult()
         val center = cells[r][c]
-        if (!center.isOpen || center.adjacentMines == 0) return MoveResult(0)
+        if (!center.isOpen || center.adjacentMines == 0) return MoveResult()
         val flags = neighbors(r, c).count { (nr, nc) -> cells[nr][nc].isFlagged }
-        if (flags != center.adjacentMines) return MoveResult(0)
+        if (flags != center.adjacentMines) return MoveResult()
 
-        var opened = 0
+        val opened = ArrayList<Pair<Int, Int>>()
         var exploded = false
         for ((nr, nc) in neighbors(r, c)) {
             val n = cells[nr][nc]
@@ -118,7 +121,7 @@ class MinesweeperEngine(
                 n.isExploded = true
                 exploded = true
             } else {
-                opened += floodOpen(nr, nc)
+                floodOpen(nr, nc, opened)
             }
         }
         if (exploded) {
@@ -177,9 +180,9 @@ class MinesweeperEngine(
         }
     }
 
-    /** BFS で連鎖オープンし、開いたマス数を返す */
-    private fun floodOpen(startR: Int, startC: Int): Int {
-        var opened = 0
+    /** BFS で連鎖オープンし、開いたマスを [opened] に追加する */
+    private fun floodOpen(startR: Int, startC: Int, opened: MutableList<Pair<Int, Int>>) {
+        val before = opened.size
         val queue = ArrayDeque<Pair<Int, Int>>()
         queue.addLast(startR to startC)
         while (queue.isNotEmpty()) {
@@ -187,7 +190,7 @@ class MinesweeperEngine(
             val cell = cells[r][c]
             if (cell.isOpen || cell.isFlagged || cell.isMine) continue
             cell.isOpen = true
-            opened++
+            opened += r to c
             if (cell.adjacentMines == 0) {
                 for (n in neighbors(r, c)) {
                     val nc = cells[n.first][n.second]
@@ -195,8 +198,7 @@ class MinesweeperEngine(
                 }
             }
         }
-        openedCount += opened
-        return opened
+        openedCount += opened.size - before
     }
 
     private fun checkWin(): Boolean {

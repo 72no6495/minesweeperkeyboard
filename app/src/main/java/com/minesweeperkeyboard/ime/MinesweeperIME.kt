@@ -29,6 +29,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private lateinit var prefs: ImePrefs
     private var engine: MinesweeperEngine? = null
     private var engineConfig: BoardConfig? = null
+    private var textSettings = TextSettings()
 
     private var boardView: MinesweeperBoardView? = null
     private var statusBar: StatusBarView? = null
@@ -193,13 +194,13 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         val result = if (cell.isOpen) {
             // 数字マスをタップ → 数字を入力（＋旗の数が合っていれば周囲を一括オープン）
             if (cell.adjacentMines > 0) commit(cell.adjacentMines.toString())
-            if (prefs.chordEnabled) e.chord(row, col) else MinesweeperEngine.MoveResult(0)
+            if (prefs.chordEnabled) e.chord(row, col) else MinesweeperEngine.MoveResult()
         } else {
             e.open(row, col)
         }
 
-        // 開いたマスの数だけカスタム文字を入力
-        commit(TextGimmick.textForOpenedCells(result.openedCells, prefs.customText, prefs.chainMode, prefs.maxChainRepeat))
+        // 開いたマスに応じた文字を入力（固定文字／座標の文字／ランダム）
+        commit(TextGimmick.textForOpened(result.openedPositions, e.cols, textSettings))
 
         when {
             result.exploded -> {
@@ -220,6 +221,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         engineConfig = config
         handler.removeCallbacks(timerTick)
         boardView?.engine = engine
+        updateCellHints()
         updateStatus()
     }
 
@@ -230,8 +232,22 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             maxHeightRatio = prefs.boardHeightPercent / 100f
             hapticsEnabled = prefs.hapticsEnabled
         }
+        textSettings = prefs.textSettings()
+        updateCellHints()
         difficultyButton?.label = getString(prefs.difficulty.labelRes)
         if (engine?.state == MinesweeperEngine.State.PLAYING) startTimer()
+    }
+
+    /** 座標モードでは閉じたマスに、開くと入力される文字を表示する */
+    private fun updateCellHints() {
+        val settings = textSettings
+        val cols = engine?.cols ?: return
+        boardView?.cellHint = when {
+            !prefs.showCellHints -> null
+            settings.mode == TextMode.COORDINATE_TABLE -> { r, c -> TextGimmick.tableCharAt(r, c, cols, settings.charTable) }
+            settings.mode == TextMode.COORDINATE_LABEL -> { r, c -> TextGimmick.coordinateLabel(r, c) }
+            else -> null
+        }
     }
 
     private fun startTimer() {
