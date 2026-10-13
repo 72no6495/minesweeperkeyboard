@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">マインスイーパーIME</string>
+    <string name="ime_name">マインスイーパーキーボード</string>
+    <string name="settings_title">マインスイーパーIME 設定</string>
+
+    <!-- リザルト -->
+    <string name="result_game_over">💥 ゲームオーバー！(%1$dマス開けた)</string>
+    <string name="result_clear">🎉 マインスイーパー クリア！ タイム: %1$d秒</string>
+
+    <!-- 難易度 -->
+    <string name="difficulty_beginner">初級</string>
+    <string name="difficulty_intermediate">中級</string>
+    <string name="difficulty_expert">上級</string>
+    <string name="difficulty_custom">カスタム</string>
+</resources>
