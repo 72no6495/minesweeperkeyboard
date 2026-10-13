@@ -25,6 +25,18 @@ class SettingsActivity : Activity() {
 
     private lateinit var prefs: ImePrefs
 
+    private lateinit var keyboardModeGroup: RadioGroup
+    private val modeBoxes = LinkedHashMap<KeyboardMode, CheckBox>()
+    private var shownMode = KeyboardMode.CLASSIC
+    private var shownLanguage = InputLanguage.ROMAJI
+    private lateinit var languageGroup: RadioGroup
+    private val languageBoxes = LinkedHashMap<InputLanguage, CheckBox>()
+    private lateinit var qwertyMinesEdit: EditText
+    private lateinit var backgroundGameBox: CheckBox
+    private lateinit var backgroundMinesEdit: EditText
+    private lateinit var backgroundResultsBox: CheckBox
+    private lateinit var predictionBox: CheckBox
+    private lateinit var dictionaryEdit: EditText
     private lateinit var textModeGroup: RadioGroup
     private lateinit var customText: EditText
     private lateinit var charTableEdit: EditText
@@ -71,8 +83,88 @@ class SettingsActivity : Activity() {
             (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
         })
 
+        // ---- キーボードのモード
+        root.addView(header("② キーボードのモード"))
+        keyboardModeGroup = RadioGroup(this)
+        shownMode = prefs.keyboardMode
+        val keyboardModeLabels = linkedMapOf(
+            KeyboardMode.CLASSIC to "💣 クラシック盤面（マスを開くと文字入力）",
+            KeyboardMode.QWERTY_GAME to "⌨💣 QWERTY 盤面でマインスイーパー（開いたキーの文字を入力）",
+            KeyboardMode.QWERTY_BACKGROUND to "⌨ 普通のキーボード（裏でマインスイーパーがうっすら動く）",
+        )
+        for ((m, text) in keyboardModeLabels) {
+            val rb = RadioButton(this).apply { id = View.generateViewId(); this.text = text; tag = m }
+            keyboardModeGroup.addView(rb)
+            if (m == prefs.keyboardMode) keyboardModeGroup.check(rb.id)
+        }
+        root.addView(keyboardModeGroup)
+        root.addView(label("キーボード左下のモード切替キーで切り替えるモード"))
+        val enabledModes = prefs.enabledModes
+        for ((m, text) in keyboardModeLabels) {
+            val box = CheckBox(this).apply { this.text = text.substringBefore("（"); isChecked = m in enabledModes }
+            modeBoxes[m] = box
+            root.addView(box)
+        }
+
+        // ---- QWERTY 入力と予測変換
+        root.addView(header("③ QWERTY の入力と予測変換"))
+        root.addView(label("使う入力（キーボードの「あ／A」キーで切り替え）"))
+        languageGroup = RadioGroup(this)
+        shownLanguage = prefs.inputLanguage
+        val languageLabels = linkedMapOf(
+            InputLanguage.ROMAJI to "ローマ字入力（ひらがな）",
+            InputLanguage.ENGLISH to "英語入力",
+        )
+        val enabledLanguages = prefs.enabledLanguages
+        for ((lang, text) in languageLabels) {
+            val box = CheckBox(this).apply { this.text = text; isChecked = lang in enabledLanguages }
+            languageBoxes[lang] = box
+            root.addView(box)
+        }
+        root.addView(label("最初に使う入力"))
+        for ((lang, text) in languageLabels) {
+            val rb = RadioButton(this).apply { id = View.generateViewId(); this.text = text; tag = lang }
+            languageGroup.addView(rb)
+            if (lang == prefs.inputLanguage) languageGroup.check(rb.id)
+        }
+        root.addView(languageGroup)
+
+        root.addView(label("QWERTY 盤面でプレイするときの地雷の数（1〜${ImePrefs.QWERTY_MAX_MINES}）"))
+        qwertyMinesEdit = numberEdit(prefs.qwertyMines)
+        root.addView(qwertyMinesEdit)
+
+        backgroundGameBox = CheckBox(this).apply {
+            text = "普通のキーボードモードで、裏のマインスイーパーを動かす"
+            isChecked = prefs.backgroundGameEnabled
+        }
+        root.addView(backgroundGameBox)
+        root.addView(label("裏のマインスイーパーの地雷の数（1〜${ImePrefs.QWERTY_MAX_MINES}）"))
+        backgroundMinesEdit = numberEdit(prefs.backgroundMines)
+        root.addView(backgroundMinesEdit)
+        backgroundResultsBox = CheckBox(this).apply {
+            text = "裏のマインスイーパーの結果（💥／🎉）も入力する"
+            isChecked = prefs.backgroundResults
+        }
+        root.addView(backgroundResultsBox)
+
+        predictionBox = CheckBox(this).apply {
+            text = "予測変換を使う（辞書に登録した単語だけを、ニコちゃんの左右に表示）"
+            isChecked = prefs.predictionEnabled
+        }
+        root.addView(predictionBox)
+        root.addView(label("予測変換の辞書：1 行に 1 つ「よみ,単語」の形式で登録します。" +
+            "よみを省略すると単語そのものがよみになります。# で始まる行は無視します"))
+        dictionaryEdit = EditText(this).apply {
+            setText(prefs.dictionaryText)
+            minLines = 5
+            gravity = Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        }
+        root.addView(dictionaryEdit)
+        root.addView(button("辞書をサンプルに戻す") { dictionaryEdit.setText(UserDictionary.SAMPLE) })
+
         // ---- 文字入力ギミック
-        root.addView(header("② 安全なマスを開いたときに入力する文字"))
+        root.addView(header("④ クラシック盤面：安全なマスを開いたときに入力する文字"))
         textModeGroup = RadioGroup(this)
         val modeLabels = linkedMapOf(
             TextMode.FIXED to "決まった文字",
@@ -173,7 +265,7 @@ class SettingsActivity : Activity() {
         root.addView(hapticsBox)
 
         // ---- 盤面
-        root.addView(header("③ 盤面サイズ"))
+        root.addView(header("⑤ クラシック盤面のサイズ"))
         difficultyGroup = RadioGroup(this)
         for (d in Difficulty.entries) {
             val rb = RadioButton(this).apply {
@@ -220,7 +312,7 @@ class SettingsActivity : Activity() {
         })
 
         // ---- 試し打ち
-        root.addView(header("④ 試し打ち"))
+        root.addView(header("⑥ 試し打ち"))
         root.addView(EditText(this).apply {
             hint = "ここをタップしてキーボードを試す"
             minLines = 3
@@ -247,6 +339,34 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
+        // ラジオボタンを変えたときだけ書き込む（試し打ち欄でキーボードから切り替えた分を上書きしない）
+        val selectedMode =
+            keyboardModeGroup.findViewById<RadioButton>(keyboardModeGroup.checkedRadioButtonId)?.tag as? KeyboardMode
+                ?: KeyboardMode.CLASSIC
+        if (selectedMode != shownMode) {
+            prefs.keyboardMode = selectedMode
+            shownMode = selectedMode
+        }
+        // 1 つも選ばれていなければ現在のモード／入力だけを有効にする
+        prefs.enabledModes = modeBoxes.filterValues { it.isChecked }.keys.ifEmpty { setOf(prefs.keyboardMode) }
+        val language =
+            languageGroup.findViewById<RadioButton>(languageGroup.checkedRadioButtonId)?.tag as? InputLanguage
+                ?: InputLanguage.ROMAJI
+        val languages = languageBoxes.filterValues { it.isChecked }.keys.ifEmpty { setOf(language) }
+        prefs.enabledLanguages = languages
+        if (language != shownLanguage || prefs.inputLanguage !in languages) {
+            prefs.inputLanguage = if (language in languages) language else languages.first()
+            shownLanguage = language
+        }
+        prefs.qwertyMines = qwertyMinesEdit.text.toString().toIntOrNull() ?: prefs.qwertyMines
+        qwertyMinesEdit.setText(prefs.qwertyMines.toString())
+        prefs.backgroundGameEnabled = backgroundGameBox.isChecked
+        prefs.backgroundMines = backgroundMinesEdit.text.toString().toIntOrNull() ?: prefs.backgroundMines
+        backgroundMinesEdit.setText(prefs.backgroundMines.toString())
+        prefs.backgroundResults = backgroundResultsBox.isChecked
+        prefs.predictionEnabled = predictionBox.isChecked
+        prefs.dictionaryText = dictionaryEdit.text.toString()
+
         prefs.customText = customText.text.toString()
         prefs.textMode = selectedTextMode()
         prefs.charTable = charTableEdit.text.toString()

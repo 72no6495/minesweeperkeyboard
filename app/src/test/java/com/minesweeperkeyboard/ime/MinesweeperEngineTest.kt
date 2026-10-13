@@ -109,7 +109,7 @@ class MinesweeperEngineTest {
     @Test
     fun sizesAreClamped() {
         val e = engine(1, 100, 10_000)
-        assertEquals(MinesweeperEngine.MIN_SIZE, e.rows)
+        assertEquals(MinesweeperEngine.MIN_ENGINE_SIZE, e.rows)
         assertEquals(MinesweeperEngine.MAX_SIZE, e.cols)
         assertEquals(e.rows * e.cols - 1, e.mineCount)
         assertFalse(e.open(0, 0).exploded)
