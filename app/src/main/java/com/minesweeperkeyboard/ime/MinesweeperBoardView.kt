@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
@@ -80,18 +81,51 @@ class MinesweeperBoardView(context: Context) : View(context) {
             invalidate()
         }
 
+    /** キー型・ゴースト表示のキーの高さ（dp） */
+    var keyHeightDp: Int = 50
+        set(value) {
+            field = value
+            requestLayout()
+        }
+
+    /** キーの文字の大きさ（1.0 = 標準） */
+    var labelScale: Float = 1f
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** 押したキーを上に大きく表示する */
+    var keyPreview = true
+
+    /** キー型・ゴースト表示で長押しとみなすまでの時間（ms）。0 なら長押しなし */
+    var longPressMs: Long = 400L
+
     private val density = resources.displayMetrics.density
     private val outerBorder = 3f * density
-    private val keyHeight = 50f * density
+    private val keyHeight: Float get() = keyHeightDp * density
 
     private var cellW = 0f
     private var cellH = 0f
     private val boardLeft: Float get() = (width - cellW * (engine?.cols ?: 0)) / 2f
     private val boardTop: Float get() = outerBorder
 
-    /** 押下中のマス（閉じたマスを凹ませて表示する） */
+    /** 押下中のマス（閉じたマスを凹ませて表示する）。クラシック盤面用 */
     private var pressedRow = -1
     private var pressedCol = -1
+
+    /** キー型・ゴースト表示で押されている指（ポインター ID → キー） */
+    private class KeyPointer(val row: Int, val col: Int, val longPress: Runnable) {
+        /** 入力済み（ロールオーバーまたは長押しで処理済み） */
+        var handled = false
+    }
+    private val keyPointers = LinkedHashMap<Int, KeyPointer>()
+    private var previewRow = -1
+    private var previewCol = -1
+
+    private fun isPressed(r: Int, c: Int): Boolean =
+        if (style == Style.CLASSIC) r == pressedRow && c == pressedCol
+        else keyPointers.values.any { it.row == r && it.col == c }
 
     private val bgPaint = Paint().apply { color = ClassicStyle.FACE }
     private val gridPaint = Paint().apply { color = ClassicStyle.SHADOW }
@@ -154,6 +188,9 @@ class MinesweeperBoardView(context: Context) : View(context) {
         val boardLeft = boardLeft
         val boardTop = boardTop
 
+        bgPaint.color = ClassicStyle.FACE
+        gridPaint.color = ClassicStyle.SHADOW
+        hintPaint.color = ClassicStyle.SHADOW
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
         // 盤面全体は凹んだ枠
         ClassicStyle.drawBevel(
@@ -172,6 +209,25 @@ class MinesweeperBoardView(context: Context) : View(context) {
                 Style.GHOST -> drawGhostCell(canvas, e, r, c, l, t, bevel)
             }
         }
+        if (keyPreview && style != Style.CLASSIC && previewRow >= 0) drawPreview(canvas, e, previewRow, previewCol)
+    }
+
+    /** 押したキーの文字を上に大きく表示する（盤面の中に収まるよう位置を調整） */
+    private fun drawPreview(canvas: Canvas, e: MinesweeperEngine, r: Int, c: Int) {
+        if (!e.inBounds(r, c)) return
+        val text = keyLabel?.invoke(r, c) ?: return
+        val w = cellW * 1.4f
+        val h = cellH * 1.25f
+        val cx = boardLeft + c * cellW + cellW / 2f
+        val left = (cx - w / 2f).coerceIn(0f, width - w)
+        val top = (boardTop + r * cellH - h * 0.9f).coerceAtLeast(0f)
+        val rect = RectF(left, top, left + w, top + h)
+        ClassicStyle.drawRaisedPanel(canvas, rect, max(1f, density * 2f))
+        labelPaint.color = ClassicStyle.DARK
+        labelPaint.textSize = h * 0.55f * labelScale
+        val tw = labelPaint.measureText(text)
+        if (tw > w * 0.85f) labelPaint.textSize *= w * 0.85f / tw
+        canvas.drawText(text, rect.centerX(), rect.centerY() - (labelPaint.descent() + labelPaint.ascent()) / 2f, labelPaint)
     }
 
     private fun drawGameCell(canvas: Canvas, e: MinesweeperEngine, r: Int, c: Int, l: Float, t: Float, bevel: Float) {
@@ -185,7 +241,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
         val label = if (keys) keyLabel?.invoke(r, c) else null
         val revealMine = cell.isMine && e.state == MinesweeperEngine.State.LOST && !cell.isFlagged
         val looksOpen = cell.isOpen || revealMine || cell.isWrongFlag ||
-            (r == pressedRow && c == pressedCol && !cell.isFlagged && !e.isGameOver)
+            (isPressed(r, c) && !cell.isFlagged && !e.isGameOver)
 
         if (looksOpen) {
             // 開いたマス：フラットなグレー＋左上の灰色の線
@@ -228,7 +284,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
         val cx = l + cellW / 2f
         val cy = t + cellH / 2f
         val unit = min(cellW, cellH)
-        val pressed = r == pressedRow && c == pressedCol
+        val pressed = isPressed(r, c)
 
         canvas.drawRect(l, t, rt, b, bgPaint)
         ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = !pressed)
@@ -239,20 +295,15 @@ class MinesweeperBoardView(context: Context) : View(context) {
                 cell.isExploded -> canvas.drawRect(l, t, rt, b, ghostExplodedPaint)
                 cell.isOpen || revealMine -> canvas.drawRect(l + bevel, t + bevel, rt - bevel, b - bevel, ghostOpenPaint)
             }
+            // レイヤーを使わず、描画色の不透明度だけで薄く重ねる（キー入力ごとの描画を軽くするため）
             val alpha = GHOST_ALPHA
             when {
-                cell.isFlagged -> withAlpha(canvas, l, t, rt, b, alpha) { ClassicStyle.drawFlag(canvas, cx, cy, unit) }
-                revealMine || cell.isExploded -> withAlpha(canvas, l, t, rt, b, alpha) { ClassicStyle.drawMine(canvas, cx, cy, unit) }
+                cell.isFlagged -> ClassicStyle.drawFlag(canvas, cx, cy, unit, alpha)
+                revealMine || cell.isExploded -> ClassicStyle.drawMine(canvas, cx, cy, unit, alpha)
                 cell.isOpen && cell.adjacentMines > 0 -> drawCornerNumber(canvas, cell.adjacentMines, rt, t, alpha)
             }
         }
         keyLabel?.invoke(r, c)?.let { drawLabel(canvas, it, cx, cy, ClassicStyle.DARK) }
-    }
-
-    private inline fun withAlpha(canvas: Canvas, l: Float, t: Float, r: Float, b: Float, alpha: Int, draw: () -> Unit) {
-        val save = canvas.saveLayerAlpha(l, t, r, b, alpha)
-        draw()
-        canvas.restoreToCount(save)
     }
 
     private fun drawCenterNumber(canvas: Canvas, n: Int, cx: Float, cy: Float) {
@@ -274,7 +325,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
 
     private fun drawLabel(canvas: Canvas, text: String, cx: Float, cy: Float, color: Int) {
         labelPaint.color = color
-        labelPaint.textSize = min(cellH * 0.45f, cellW * 0.6f)
+        labelPaint.textSize = min(cellH * 0.45f, cellW * 0.6f) * labelScale
         val w = labelPaint.measureText(text)
         val maxW = cellW * 0.8f
         if (w > maxW) labelPaint.textSize *= maxW / w
@@ -292,6 +343,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (style != Style.CLASSIC) return onKeyTouch(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val cell = cellAt(event.x, event.y)
@@ -314,6 +366,86 @@ class MinesweeperBoardView(context: Context) : View(context) {
             clearPressed()
         }
         return handled || super.onTouchEvent(event)
+    }
+
+    /**
+     * キー型・ゴースト表示のタッチ処理（マルチタッチ対応）。
+     * - キーは指を置いた位置で決まり、指を離したときに入力する
+     * - 前の指を離す前に次の指が触れたら、前のキーをその場で入力する（ロールオーバー）。速く打っても取りこぼさない
+     * - [longPressMs] 押し続けたら長押し
+     */
+    private fun onKeyTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    // 最初の指：前のジェスチャーの取り残し（UP を受け取れなかった指）は入力せずに捨てる
+                    keyPointers.values.forEach { removeCallbacks(it.longPress) }
+                    keyPointers.clear()
+                }
+                // 押しっぱなしの前のキーは、この時点で入力を確定させる
+                for (p in keyPointers.values) {
+                    if (!p.handled) {
+                        p.handled = true
+                        removeCallbacks(p.longPress)
+                        listener?.onCellTap(p.row, p.col)
+                    }
+                }
+                val index = event.actionIndex
+                val id = event.getPointerId(index)
+                val cell = cellAt(event.getX(index), event.getY(index))
+                if (cell != null) {
+                    val (r, c) = cell
+                    lateinit var pointer: KeyPointer
+                    pointer = KeyPointer(r, c, Runnable {
+                        if (!pointer.handled && keyPointers[id] === pointer) {
+                            pointer.handled = true
+                            if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            listener?.onCellLongPress(r, c)
+                        }
+                    })
+                    keyPointers[id] = pointer
+                    if (longPressMs > 0) postDelayed(pointer.longPress, longPressMs)
+                    previewRow = r
+                    previewCol = c
+                    if (keyPointers.size == 1 && engine?.isGameOver == false) listener?.onBoardPressChanged(true)
+                }
+                invalidate()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                val id = event.getPointerId(event.actionIndex)
+                keyPointers.remove(id)?.let { p ->
+                    removeCallbacks(p.longPress)
+                    if (!p.handled) listener?.onCellTap(p.row, p.col)
+                }
+                if (keyPointers.isEmpty()) {
+                    previewRow = -1
+                    previewCol = -1
+                    listener?.onBoardPressChanged(false)
+                } else {
+                    keyPointers.values.last().let { previewRow = it.row; previewCol = it.col }
+                }
+                invalidate()
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // システムにタッチを取られた場合も、押していたキーは入力しておく
+                for (p in keyPointers.values) {
+                    removeCallbacks(p.longPress)
+                    if (!p.handled) listener?.onCellTap(p.row, p.col)
+                }
+                keyPointers.clear()
+                previewRow = -1
+                previewCol = -1
+                listener?.onBoardPressChanged(false)
+                invalidate()
+            }
+        }
+        return true
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        keyPointers.values.forEach { removeCallbacks(it.longPress) }
+        keyPointers.clear()
     }
 
     private fun clearPressed() {

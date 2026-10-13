@@ -80,6 +80,78 @@ class ImePrefs(context: Context) {
         get() = sp.getBoolean(KEY_BG_RESULTS, false)
         set(v) = sp.edit().putBoolean(KEY_BG_RESULTS, v).apply()
 
+    // ---- QWERTY・普通キーボードのカスタマイズ
+
+    var theme: Theme
+        get() = Theme.fromKey(sp.getString(KEY_THEME, null))
+        set(v) = sp.edit().putString(KEY_THEME, v.key).apply()
+
+    var keyLayout: KeyLayout
+        get() = KeyLayout.fromKey(sp.getString(KEY_KEY_LAYOUT, null))
+        set(v) = sp.edit().putString(KEY_KEY_LAYOUT, v.key).apply()
+
+    /** 数字の行を表示する */
+    var numberRow: Boolean
+        get() = sp.getBoolean(KEY_NUMBER_ROW, true)
+        set(v) = sp.edit().putBoolean(KEY_NUMBER_ROW, v).apply()
+
+    var keyHeightDp: Int
+        get() = sp.getInt(KEY_KEY_HEIGHT, 50)
+        set(v) = sp.edit().putInt(KEY_KEY_HEIGHT, v.coerceIn(MIN_KEY_HEIGHT, MAX_KEY_HEIGHT)).apply()
+
+    /** キーの文字の大きさ（%） */
+    var keyTextPercent: Int
+        get() = sp.getInt(KEY_KEY_TEXT, 100)
+        set(v) = sp.edit().putInt(KEY_KEY_TEXT, v.coerceIn(MIN_KEY_TEXT, MAX_KEY_TEXT)).apply()
+
+    var keyPreview: Boolean
+        get() = sp.getBoolean(KEY_KEY_PREVIEW, true)
+        set(v) = sp.edit().putBoolean(KEY_KEY_PREVIEW, v).apply()
+
+    var keySound: Boolean
+        get() = sp.getBoolean(KEY_KEY_SOUND, false)
+        set(v) = sp.edit().putBoolean(KEY_KEY_SOUND, v).apply()
+
+    /** 長押しとみなすまでの時間（ms） */
+    var longPressMs: Int
+        get() = sp.getInt(KEY_LONG_PRESS_MS, 400)
+        set(v) = sp.edit().putInt(KEY_LONG_PRESS_MS, v.coerceIn(MIN_LONG_PRESS, MAX_LONG_PRESS)).apply()
+
+    /** 普通のキーボードモードで長押ししたときの動作 */
+    var longPressAction: LongPressAction
+        get() = LongPressAction.fromKey(sp.getString(KEY_LONG_PRESS_ACTION, null))
+        set(v) = sp.edit().putString(KEY_LONG_PRESS_ACTION, v.key).apply()
+
+    var showGlobeKey: Boolean
+        get() = sp.getBoolean(KEY_GLOBE, true)
+        set(v) = sp.edit().putBoolean(KEY_GLOBE, v).apply()
+
+    /** 英語入力：文の始めを自動で大文字にする */
+    var autoCapitalize: Boolean
+        get() = sp.getBoolean(KEY_AUTO_CAP, true)
+        set(v) = sp.edit().putBoolean(KEY_AUTO_CAP, v).apply()
+
+    /** 英語入力：スペース 2 回でピリオド */
+    var doubleSpacePeriod: Boolean
+        get() = sp.getBoolean(KEY_DOUBLE_SPACE, true)
+        set(v) = sp.edit().putBoolean(KEY_DOUBLE_SPACE, v).apply()
+
+    /** 英語入力：候補を選んだ後にスペースを入れる */
+    var spaceAfterCandidate: Boolean
+        get() = sp.getBoolean(KEY_SPACE_AFTER_CANDIDATE, true)
+        set(v) = sp.edit().putBoolean(KEY_SPACE_AFTER_CANDIDATE, v).apply()
+
+    var punctuationStyle: PunctuationStyle
+        get() = PunctuationStyle.fromKey(sp.getString(KEY_PUNCTUATION, null))
+        set(v) = sp.edit().putString(KEY_PUNCTUATION, v.key).apply()
+
+    /** 予測変換で選んだ単語を学習して先に出す */
+    var learningEnabled: Boolean
+        get() = sp.getBoolean(KEY_LEARNING, true)
+        set(v) = sp.edit().putBoolean(KEY_LEARNING, v).apply()
+
+    fun keyGrid() = KeyGrid(keyLayout, numberRow)
+
     private fun keySet(key: String, default: List<String>): Set<String> =
         sp.getStringSet(key, null) ?: default.toSet()
 
@@ -158,8 +230,8 @@ class ImePrefs(context: Context) {
     /** モードごとの盤面（QWERTY 系は 4×10 固定） */
     fun boardConfigFor(mode: KeyboardMode): BoardConfig = when (mode) {
         KeyboardMode.CLASSIC -> boardConfig()
-        KeyboardMode.QWERTY_GAME -> BoardConfig(QwertyLayout.rows, QwertyLayout.cols, qwertyMines)
-        KeyboardMode.QWERTY_BACKGROUND -> BoardConfig(QwertyLayout.rows, QwertyLayout.cols, backgroundMines)
+        KeyboardMode.QWERTY_GAME -> keyGrid().let { BoardConfig(it.rowCount, it.colCount, qwertyMines) }
+        KeyboardMode.QWERTY_BACKGROUND -> keyGrid().let { BoardConfig(it.rowCount, it.colCount, backgroundMines) }
     }
 
     fun boardConfig(): BoardConfig {
@@ -175,6 +247,13 @@ class ImePrefs(context: Context) {
 
     companion object {
         const val DEFAULT_TEXT = TextGimmick.DEFAULT_FIXED_TEXT
+        const val MIN_KEY_HEIGHT = 36
+        const val MAX_KEY_HEIGHT = 72
+        const val MIN_KEY_TEXT = 70
+        const val MAX_KEY_TEXT = 150
+        const val MIN_LONG_PRESS = 200
+        const val MAX_LONG_PRESS = 1000
+
         /** QWERTY 盤面（40 マス）の地雷の上限 */
         const val QWERTY_MAX_MINES = 20
         const val MIN_HEIGHT_PERCENT = 25
@@ -187,6 +266,21 @@ class ImePrefs(context: Context) {
         private const val KEY_ENABLED_LANGUAGES = "enabled_languages"
         private const val KEY_PREDICTION = "prediction_enabled"
         private const val KEY_DICTIONARY = "dictionary"
+        private const val KEY_THEME = "theme"
+        private const val KEY_KEY_LAYOUT = "key_layout"
+        private const val KEY_NUMBER_ROW = "number_row"
+        private const val KEY_KEY_HEIGHT = "key_height_dp"
+        private const val KEY_KEY_TEXT = "key_text_percent"
+        private const val KEY_KEY_PREVIEW = "key_preview"
+        private const val KEY_KEY_SOUND = "key_sound"
+        private const val KEY_LONG_PRESS_MS = "long_press_ms"
+        private const val KEY_LONG_PRESS_ACTION = "long_press_action"
+        private const val KEY_GLOBE = "show_globe_key"
+        private const val KEY_AUTO_CAP = "auto_capitalize"
+        private const val KEY_DOUBLE_SPACE = "double_space_period"
+        private const val KEY_SPACE_AFTER_CANDIDATE = "space_after_candidate"
+        private const val KEY_PUNCTUATION = "punctuation_style"
+        private const val KEY_LEARNING = "learning"
         private const val KEY_SYSTEM_DICTIONARY = "system_dictionary"
         private const val KEY_QWERTY_MINES = "qwerty_mines"
         private const val KEY_BG_GAME = "background_game"

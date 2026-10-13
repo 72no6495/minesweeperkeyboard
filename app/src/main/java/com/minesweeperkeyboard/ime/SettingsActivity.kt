@@ -26,6 +26,21 @@ class SettingsActivity : Activity() {
 
     private lateinit var prefs: ImePrefs
 
+    private lateinit var themeGroup: RadioGroup
+    private lateinit var layoutGroup: RadioGroup
+    private lateinit var numberRowBox: CheckBox
+    private lateinit var keyHeight: () -> Int
+    private lateinit var keyText: () -> Int
+    private lateinit var keyPreviewBox: CheckBox
+    private lateinit var keySoundBox: CheckBox
+    private lateinit var globeBox: CheckBox
+    private lateinit var longPress: () -> Int
+    private lateinit var longPressGroup: RadioGroup
+    private lateinit var autoCapBox: CheckBox
+    private lateinit var doubleSpaceBox: CheckBox
+    private lateinit var spaceAfterCandidateBox: CheckBox
+    private lateinit var punctuationGroup: RadioGroup
+    private lateinit var learningBox: CheckBox
     private lateinit var keyboardModeGroup: RadioGroup
     private val modeBoxes = LinkedHashMap<KeyboardMode, CheckBox>()
     private var shownMode = KeyboardMode.CLASSIC
@@ -195,8 +210,59 @@ class SettingsActivity : Activity() {
         root.addView(dictionaryEdit)
         root.addView(button("辞書をサンプルに戻す") { dictionaryEdit.setText(UserDictionary.SAMPLE) })
 
+        // ---- QWERTY・普通キーボードのカスタマイズ
+        root.addView(header("④ キーボードの見た目と操作"))
+        root.addView(label("テーマ（すべてのモード）"))
+        themeGroup = radioGroup(Theme.entries.map { it to it.label }, prefs.theme)
+        root.addView(themeGroup)
+
+        root.addView(label("キー配列（QWERTY 盤面・普通のキーボード）"))
+        layoutGroup = radioGroup(KeyLayout.entries.map { it to it.label }, prefs.keyLayout)
+        root.addView(layoutGroup)
+        numberRowBox = checkBox("数字の行を表示する（オフにすると数字は「記号」キーから入力）", prefs.numberRow)
+        root.addView(numberRowBox)
+
+        keyHeight = slider(root, ImePrefs.MIN_KEY_HEIGHT, ImePrefs.MAX_KEY_HEIGHT, 2, prefs.keyHeightDp) { "キーの高さ：${it}dp" }
+        keyText = slider(root, ImePrefs.MIN_KEY_TEXT, ImePrefs.MAX_KEY_TEXT, 5, prefs.keyTextPercent) { "キーの文字の大きさ：${it}%" }
+        keyPreviewBox = checkBox("押したキーを上に大きく表示する", prefs.keyPreview)
+        root.addView(keyPreviewBox)
+        keySoundBox = checkBox("キーを押したときに音を鳴らす", prefs.keySound)
+        root.addView(keySoundBox)
+        globeBox = checkBox("🌐（キーボード切り替え）キーを表示する", prefs.showGlobeKey)
+        root.addView(globeBox)
+
+        longPress = slider(root, ImePrefs.MIN_LONG_PRESS, ImePrefs.MAX_LONG_PRESS, 50, prefs.longPressMs) { "長押しと判定するまでの時間：${it}ms" }
+        root.addView(label("普通のキーボードでキーを長押ししたとき"))
+        longPressGroup = radioGroup(LongPressAction.entries.map { it to it.label }, prefs.longPressAction)
+        root.addView(longPressGroup)
+
+        root.addView(label("英語入力"))
+        autoCapBox = checkBox("文の始めを自動で大文字にする（入力欄が対応している場合）", prefs.autoCapitalize)
+        root.addView(autoCapBox)
+        doubleSpaceBox = checkBox("スペースを 2 回押すとピリオドを入力する", prefs.doubleSpacePeriod)
+        root.addView(doubleSpaceBox)
+        spaceAfterCandidateBox = checkBox("候補を選んだ後にスペースを入れる", prefs.spaceAfterCandidate)
+        root.addView(spaceAfterCandidateBox)
+
+        root.addView(label("日本語入力の句読点"))
+        punctuationGroup = radioGroup(PunctuationStyle.entries.map { it to it.label }, prefs.punctuationStyle)
+        root.addView(punctuationGroup)
+
+        learningBox = checkBox("選んだ候補を学習して、次から先に出す", prefs.learningEnabled)
+        root.addView(learningBox)
+        root.addView(button("学習した内容を消去") {
+            AlertDialog.Builder(this)
+                .setMessage("学習した ${Learning.model.size()} 件の候補をすべて消去しますか？")
+                .setPositiveButton("消去") { _, _ ->
+                    Learning.reset(filesDir)
+                    Toast.makeText(this, "学習した内容を消去しました", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        })
+
         // ---- 文字入力ギミック
-        root.addView(header("④ クラシック盤面：安全なマスを開いたときに入力する文字"))
+        root.addView(header("⑤ クラシック盤面：安全なマスを開いたときに入力する文字"))
         textModeGroup = RadioGroup(this)
         val modeLabels = linkedMapOf(
             TextMode.FIXED to "決まった文字",
@@ -297,7 +363,7 @@ class SettingsActivity : Activity() {
         root.addView(hapticsBox)
 
         // ---- 盤面
-        root.addView(header("⑤ クラシック盤面のサイズ"))
+        root.addView(header("⑥ クラシック盤面のサイズ"))
         difficultyGroup = RadioGroup(this)
         for (d in Difficulty.entries) {
             val rb = RadioButton(this).apply {
@@ -344,7 +410,7 @@ class SettingsActivity : Activity() {
         })
 
         // ---- 試し打ち
-        root.addView(header("⑥ 試し打ち"))
+        root.addView(header("⑦ 試し打ち"))
         root.addView(EditText(this).apply {
             hint = "ここをタップしてキーボードを試す"
             minLines = 3
@@ -371,6 +437,21 @@ class SettingsActivity : Activity() {
     }
 
     private fun save() {
+        prefs.theme = selected<Theme>(themeGroup) ?: Theme.CLASSIC
+        prefs.keyLayout = selected<KeyLayout>(layoutGroup) ?: KeyLayout.QWERTY
+        prefs.numberRow = numberRowBox.isChecked
+        prefs.keyHeightDp = keyHeight()
+        prefs.keyTextPercent = keyText()
+        prefs.keyPreview = keyPreviewBox.isChecked
+        prefs.keySound = keySoundBox.isChecked
+        prefs.showGlobeKey = globeBox.isChecked
+        prefs.longPressMs = longPress()
+        prefs.longPressAction = selected<LongPressAction>(longPressGroup) ?: LongPressAction.SYMBOL
+        prefs.autoCapitalize = autoCapBox.isChecked
+        prefs.doubleSpacePeriod = doubleSpaceBox.isChecked
+        prefs.spaceAfterCandidate = spaceAfterCandidateBox.isChecked
+        prefs.punctuationStyle = selected<PunctuationStyle>(punctuationGroup) ?: PunctuationStyle.TOUTEN_KUTEN
+        prefs.learningEnabled = learningBox.isChecked
         // ラジオボタンを変えたときだけ書き込む（試し打ち欄でキーボードから切り替えた分を上書きしない）
         val selectedMode =
             keyboardModeGroup.findViewById<RadioButton>(keyboardModeGroup.checkedRadioButtonId)?.tag as? KeyboardMode
@@ -475,6 +556,43 @@ class SettingsActivity : Activity() {
             append("\n")
             append(if (selected) "✅ 現在の入力方法です" else "⬜ 現在の入力方法ではありません")
         }
+    }
+
+    /** タグに選択肢の値を持たせたラジオボタンのグループ */
+    private fun <T> radioGroup(options: List<Pair<T, String>>, selected: T) = RadioGroup(this).apply {
+        for ((value, text) in options) {
+            val rb = RadioButton(this@SettingsActivity).apply { id = View.generateViewId(); this.text = text; tag = value }
+            addView(rb)
+            if (value == selected) check(rb.id)
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun <T> selected(group: RadioGroup): T? =
+        group.findViewById<RadioButton>(group.checkedRadioButtonId)?.tag as? T
+
+    private fun checkBox(text: String, checked: Boolean) = CheckBox(this).apply {
+        this.text = text
+        isChecked = checked
+    }
+
+    /** 見出し付きのスライダーを追加し、現在の値を返す関数を返す */
+    private fun slider(parent: LinearLayout, min: Int, max: Int, step: Int, value: Int, title: (Int) -> String): () -> Int {
+        val caption = label(title(value))
+        val bar = SeekBar(this).apply {
+            this.max = (max - min) / step
+            progress = ((value - min) / step).coerceIn(0, this.max)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    caption.text = title(min + p * step)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) = Unit
+                override fun onStopTrackingTouch(sb: SeekBar) = Unit
+            })
+        }
+        parent.addView(caption)
+        parent.addView(bar)
+        return { min + bar.progress * step }
     }
 
     private fun header(text: String) = TextView(this).apply {
