@@ -153,15 +153,3 @@ app/src/main/java/com/minesweeperkeyboard/ime/
 ├── ImePrefs.kt                設定の保存
 └── SettingsActivity.kt        設定画面
 ```
-
-### リリース手順（開発者向け）
-
-次のどちらかの方法で、GitHub Actions が APK をビルドして Releases に公開します。
-
-- **Actions** タブ → **Build APK** → **Run workflow** で `release_tag` に `v1.0.0` などを入力して実行
-- `v` から始まるタグを push する
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
