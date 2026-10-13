@@ -50,7 +50,6 @@ class MinesweeperEngineTest {
     fun steppingOnMineLoses() {
         val e = engine(5, 5, 1)
         e.setMinesForTest(listOf(2 to 2))
-        e.open(0, 0)
         val result = e.open(2, 2)
         assertTrue(result.exploded)
         assertEquals(MinesweeperEngine.State.LOST, e.state)

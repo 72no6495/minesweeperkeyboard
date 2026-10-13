@@ -12,6 +12,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
@@ -61,6 +62,12 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ClassicStyle.FACE)
             setPadding(pad, pad, pad, pad)
+            // Android 15 以降は IME もナビゲーションバーの下まで描画されるため、
+            // ホームボタン／ジェスチャー領域の分だけ下に余白を取る
+            setOnApplyWindowInsetsListener { v, insets ->
+                v.setPadding(pad, pad, pad, pad + bottomSystemInset(insets))
+                insets
+            }
         }
 
         statusBar = StatusBarView(this).also {
@@ -83,6 +90,17 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         updateStatus()
         return root
     }
+
+    private fun bottomSystemInset(insets: WindowInsets): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            maxOf(
+                insets.getInsets(WindowInsets.Type.navigationBars()).bottom,
+                insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom,
+            )
+        } else {
+            // Android 10 以前は IME ウィンドウがナビゲーションバーの上に配置される
+            0
+        }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createKeyRow(): View {
