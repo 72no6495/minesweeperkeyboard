@@ -51,6 +51,11 @@ class ImePrefs(context: Context) {
         get() = sp.getBoolean(KEY_PREDICTION, true)
         set(v) = sp.edit().putBoolean(KEY_PREDICTION, v).apply()
 
+    /** ローマ字入力の予測変換に日本語辞書（Mozc）を使う */
+    var systemDictionaryEnabled: Boolean
+        get() = sp.getBoolean(KEY_SYSTEM_DICTIONARY, true)
+        set(v) = sp.edit().putBoolean(KEY_SYSTEM_DICTIONARY, v).apply()
+
     /** 予測変換の辞書（1 行 1 語「よみ,単語」） */
     var dictionaryText: String
         get() = sp.getString(KEY_DICTIONARY, null) ?: UserDictionary.SAMPLE
@@ -182,6 +187,7 @@ class ImePrefs(context: Context) {
         private const val KEY_ENABLED_LANGUAGES = "enabled_languages"
         private const val KEY_PREDICTION = "prediction_enabled"
         private const val KEY_DICTIONARY = "dictionary"
+        private const val KEY_SYSTEM_DICTIONARY = "system_dictionary"
         private const val KEY_QWERTY_MINES = "qwerty_mines"
         private const val KEY_BG_GAME = "background_game"
         private const val KEY_BG_MINES = "background_mines"

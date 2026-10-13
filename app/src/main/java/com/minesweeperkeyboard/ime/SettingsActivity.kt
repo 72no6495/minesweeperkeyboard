@@ -1,6 +1,7 @@
 package com.minesweeperkeyboard.ime
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -36,6 +37,7 @@ class SettingsActivity : Activity() {
     private lateinit var backgroundMinesEdit: EditText
     private lateinit var backgroundResultsBox: CheckBox
     private lateinit var predictionBox: CheckBox
+    private lateinit var systemDictionaryBox: CheckBox
     private lateinit var dictionaryEdit: EditText
     private lateinit var textModeGroup: RadioGroup
     private lateinit var customText: EditText
@@ -148,11 +150,41 @@ class SettingsActivity : Activity() {
         root.addView(backgroundResultsBox)
 
         predictionBox = CheckBox(this).apply {
-            text = "予測変換を使う（辞書に登録した単語だけを、ニコちゃんの左右に表示）"
+            text = "予測変換を使う（候補をニコちゃんの左右に表示。候補が多いときは空白キーで次のページ）"
             isChecked = prefs.predictionEnabled
         }
         root.addView(predictionBox)
-        root.addView(label("予測変換の辞書：1 行に 1 つ「よみ,単語」の形式で登録します。" +
+
+        val bundled = SystemDictionaryLoader.isBundled(this)
+        systemDictionaryBox = CheckBox(this).apply {
+            text = "日本語辞書（Mozc）の単語も候補に出す（ローマ字入力のとき）"
+            isChecked = prefs.systemDictionaryEnabled
+            isEnabled = bundled
+        }
+        root.addView(systemDictionaryBox)
+        root.addView(label(
+            if (bundled) "約 75 万語のよみを収録しています。初めて使うときに辞書を展開するため、候補が出るまで数秒かかります"
+            else "このビルドには日本語辞書が入っていません（tools/build_ja_dictionary.py で作成できます）",
+        ))
+        if (bundled) {
+            root.addView(button("日本語辞書のライセンスを表示") {
+                val text = SystemDictionaryLoader.licenseText(this).orEmpty()
+                AlertDialog.Builder(this)
+                    .setTitle("日本語辞書のライセンス")
+                    .setView(ScrollView(this).apply {
+                        val p = (16 * dp).toInt()
+                        addView(TextView(this@SettingsActivity).apply {
+                            this.text = text
+                            setPadding(p, p, p, p)
+                            setTextIsSelectable(true)
+                        })
+                    })
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+            })
+        }
+
+        root.addView(label("ユーザー辞書（候補の先頭に出ます）：1 行に 1 つ「よみ,単語」の形式で登録します。" +
             "よみを省略すると単語そのものがよみになります。# で始まる行は無視します"))
         dictionaryEdit = EditText(this).apply {
             setText(prefs.dictionaryText)
@@ -365,6 +397,7 @@ class SettingsActivity : Activity() {
         backgroundMinesEdit.setText(prefs.backgroundMines.toString())
         prefs.backgroundResults = backgroundResultsBox.isChecked
         prefs.predictionEnabled = predictionBox.isChecked
+        prefs.systemDictionaryEnabled = systemDictionaryBox.isChecked
         prefs.dictionaryText = dictionaryEdit.text.toString()
 
         prefs.customText = customText.text.toString()

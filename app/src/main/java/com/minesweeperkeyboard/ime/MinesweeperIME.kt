@@ -38,6 +38,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private val composer = Composer()
     private var dictionary = UserDictionary("")
     private var dictionarySource: String? = null
+    /** 予測候補（全件）と、ステータスバーに表示中のページ */
+    private var candidateList: List<String> = emptyList()
+    private var candidatePage = 0
 
     private var boardView: MinesweeperBoardView? = null
     private var statusBar: StatusBarView? = null
@@ -67,6 +70,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     override fun onCreate() {
         super.onCreate()
         prefs = ImePrefs(this)
+        // 日本語辞書は初回に展開が必要なので、先にバックグラウンドで読み込んでおく
+        if (prefs.systemDictionaryEnabled) SystemDictionaryLoader.getOrLoadAsync(this)
     }
 
     // 横画面でも全画面の抽出 UI にせず、盤面をそのまま表示する
@@ -493,16 +498,41 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         updateCandidates()
     }
 
+    /** ユーザー辞書の単語を先に、日本語辞書（ローマ字入力時）の候補を後に並べる */
     private fun updateCandidates() {
-        statusBar?.candidates = if (mode.isQwerty && prefs.predictionEnabled) {
-            dictionary.lookup(composer.reading)
+        val reading = composer.reading
+        candidateList = if (mode.isQwerty && prefs.predictionEnabled && reading.isNotEmpty()) {
+            val user = dictionary.lookup(reading, limit = MAX_USER_CANDIDATES)
+            val system = if (composer.language == InputLanguage.ROMAJI && prefs.systemDictionaryEnabled) {
+                SystemDictionaryLoader.getOrLoadAsync(this) { handler.post { updateCandidates() } }
+                    ?.lookup(reading).orEmpty()
+            } else {
+                emptyList()
+            }
+            (user + system).distinct().take(MAX_CANDIDATES)
         } else {
             emptyList()
         }
+        candidatePage = 0
+        showCandidatePage()
     }
 
+    private fun showCandidatePage() {
+        val from = candidatePage * CANDIDATES_PER_PAGE
+        statusBar?.candidates = candidateList.drop(from).take(CANDIDATES_PER_PAGE)
+    }
+
+    /** 入力中に候補が 1 ページに収まらなければ次のページへ、そうでなければ入力中の文字を確定 */
     private fun onSpace() {
-        if (!composer.isEmpty()) finishComposing() else commit(" ")
+        when {
+            composer.isEmpty() -> commit(" ")
+            candidateList.size > CANDIDATES_PER_PAGE -> {
+                val pages = (candidateList.size + CANDIDATES_PER_PAGE - 1) / CANDIDATES_PER_PAGE
+                candidatePage = (candidatePage + 1) % pages
+                showCandidatePage()
+            }
+            else -> finishComposing()
+        }
     }
 
     private fun onEnter() {
@@ -597,6 +627,12 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private fun openSettings() {
         finishComposing()
         startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    private companion object {
+        const val CANDIDATES_PER_PAGE = 4
+        const val MAX_CANDIDATES = 24
+        const val MAX_USER_CANDIDATES = 8
     }
 
     private fun vibrate(strong: Boolean) {

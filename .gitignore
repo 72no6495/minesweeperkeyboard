@@ -7,3 +7,7 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+# tools/build_ja_dictionary.py が生成する日本語辞書
+app/src/main/assets/ja_dict.bin
+app/src/main/assets/ja_prefix.bin
+app/src/main/assets/ja_dict_LICENSE.txt
