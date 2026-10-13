@@ -9,6 +9,11 @@ import java.io.File
  */
 class LearningModel(private val maxEntries: Int = 3000) {
 
+    private companion object {
+        /** 「次の単語」の学習データのよみに付ける印 */
+        const val NEXT_MARK = "\u0001"
+    }
+
     private data class Entry(val reading: String, val word: String, var count: Int, var lastUsed: Long)
 
     private val entries = LinkedHashMap<String, Entry>()
@@ -27,10 +32,27 @@ class LearningModel(private val maxEntries: Int = 3000) {
         }
     }
 
+    /** [previous] の次に [next] を入力したことを覚える（次の単語の予測用） */
+    fun learnNext(previous: String, next: String) {
+        if (previous.isNotEmpty()) learn(NEXT_MARK + previous, next)
+    }
+
+    /** [previous] の次によく入力した単語 */
+    @Synchronized
+    fun lookupNext(previous: String, limit: Int = 8): List<String> {
+        if (previous.isEmpty()) return emptyList()
+        val key = NEXT_MARK + previous
+        return entries.values
+            .filter { it.reading == key }
+            .sortedWith(compareByDescending<Entry> { it.count }.thenByDescending { it.lastUsed })
+            .map { it.word }
+            .take(limit)
+    }
+
     /** よみが [prefix] で始まる学習済みの単語（よみが完全一致するもの → 回数 → 最近使った順） */
     @Synchronized
     fun lookup(prefix: String, limit: Int = 4): List<String> {
-        if (prefix.isEmpty()) return emptyList()
+        if (prefix.isEmpty() || prefix.startsWith(NEXT_MARK)) return emptyList()
         return entries.values
             .filter { it.reading.startsWith(prefix, ignoreCase = true) }
             .sortedWith(

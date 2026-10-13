@@ -64,11 +64,25 @@ enum class PunctuationStyle(val key: String, val comma: String, val period: Stri
 /**
  * QWERTY 系の盤面（10 列 × 3〜4 行）。数字の行は設定で出し入れできる。
  * 記号モードでは同じ位置に [SYMBOL_ROWS] の記号が並ぶ。
+ * [flagKey] が true なら、いちばん下の段の左端（QWERTY なら Z の左）に🚩キーを置く（その段の右端の「?」は記号モードへ）。
  */
-class KeyGrid(val layout: KeyLayout = KeyLayout.QWERTY, val numberRow: Boolean = true) {
+class KeyGrid(
+    val layout: KeyLayout = KeyLayout.QWERTY,
+    val numberRow: Boolean = true,
+    val flagKey: Boolean = false,
+) {
 
-    val rows: List<String> = (if (numberRow) listOf(NUMBER_ROW) else emptyList()) + layout.letterRows
-    private val symbolRows: List<String> = SYMBOL_ROWS.take(rows.size)
+    val rows: List<String> = ((if (numberRow) listOf(NUMBER_ROW) else emptyList()) + layout.letterRows).let { rows ->
+        if (flagKey) rows.dropLast(1) + (FLAG + rows.last().dropLast(1)) else rows
+    }
+    private val symbolRows: List<String> = SYMBOL_ROWS.take(rows.size).let { rows ->
+        if (flagKey) rows.dropLast(1) + (FLAG + rows.last().drop(1)) else rows
+    }
+
+    /** 🚩キーの位置（なければ null） */
+    val flagPosition: Pair<Int, Int>? = if (flagKey) (rows.size - 1) to 0 else null
+
+    fun isFlagKey(r: Int, c: Int): Boolean = flagKey && r == rows.size - 1 && c == 0
 
     val rowCount: Int get() = rows.size
     val colCount: Int get() = COLS
@@ -82,6 +96,7 @@ class KeyGrid(val layout: KeyLayout = KeyLayout.QWERTY, val numberRow: Boolean =
         r: Int, c: Int, language: InputLanguage, shift: Boolean, symbols: Boolean,
         punctuation: PunctuationStyle = PunctuationStyle.TOUTEN_KUTEN,
     ): String {
+        if (isFlagKey(r, c)) return "🚩"
         if (symbols) return symbolAt(r, c).toString()
         val k = keyAt(r, c)
         return when (language) {
@@ -92,6 +107,8 @@ class KeyGrid(val layout: KeyLayout = KeyLayout.QWERTY, val numberRow: Boolean =
 
     companion object {
         const val COLS = 10
+        /** 🚩キーを表す文字 */
+        const val FLAG = '\u2691'
         const val NUMBER_ROW = "1234567890"
         val SYMBOL_ROWS = listOf(
             "1234567890",
@@ -137,6 +154,18 @@ class Composer {
     /** 予測変換の検索に使う読み（ローマ字の未確定部分は含めない） */
     val reading: String
         get() = if (language == InputLanguage.ENGLISH) english.toString() else romaji.kana
+
+    /**
+     * 予測変換で検索するよみ。ローマ字の途中（"かんj" など）なら続きのかなを補ったよみ（かんじ・かんじゃ…）、
+     * そうでなければ [reading] だけ。
+     */
+    val readingVariants: List<String>
+        get() {
+            if (language == InputLanguage.ENGLISH) return listOf(reading).filter { it.isNotEmpty() }
+            val kana = romaji.kana
+            val completions = romaji.pendingCompletions().map { kana + it }
+            return (if (completions.isEmpty()) listOf(kana) else completions).filter { it.isNotEmpty() }
+        }
 
     fun isEmpty() = composing.isEmpty()
 

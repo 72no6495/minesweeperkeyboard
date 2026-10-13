@@ -107,11 +107,19 @@ class SortedRecordFile(private val buf: ByteBuffer) {
  */
 class JapaneseDictionary(private val main: SortedRecordFile, private val prefix: SortedRecordFile?) {
 
-    fun lookup(reading: String, limit: Int = 24): List<String> {
+    fun lookup(reading: String, limit: Int = 60): List<String> {
         if (reading.isEmpty()) return emptyList()
         val result = LinkedHashSet<String>()
 
-        main.find(reading)?.words?.forEach { result += it.second }
+        val exact = main.find(reading)?.words.orEmpty()
+        // 単語に区切って変換した文（例：わたしはがくせい → 私は学生）。完全一致する単語がなければ先頭に
+        val sentence = convert(reading)
+        if (exact.isEmpty() && sentence != null) result += sentence
+        exact.forEachIndexed { i, (_, word) ->
+            result += word
+            if (i == 1 && sentence != null) result += sentence
+        }
+        if (sentence != null) result += sentence
         // カタカナも候補に（辞書になくても出す）
         toKatakana(reading).takeIf { it != reading }?.let { result += it }
 
@@ -131,7 +139,81 @@ class JapaneseDictionary(private val main: SortedRecordFile, private val prefix:
         return result.take(limit)
     }
 
+    /**
+     * よみを単語に区切り、Mozc のコストの合計が最小になる組み合わせで変換する（2 語以上になったときだけ返す）。
+     * 辞書にない 1 文字はそのまま残す。
+     */
+    fun convert(reading: String): String? {
+        val n = reading.length
+        if (n < 2 || n > MAX_CONVERT_LENGTH) return null
+        val best = IntArray(n + 1) { Int.MAX_VALUE }
+        val from = IntArray(n + 1) { -1 }
+        val word = arrayOfNulls<String>(n + 1)
+        best[0] = 0
+        for (i in 0 until n) {
+            if (best[i] == Int.MAX_VALUE) continue
+            for (len in 1..minOf(MAX_SEGMENT, n - i)) {
+                val sub = reading.substring(i, i + len)
+                val (cost, w) = segment(sub) ?: if (len == 1) UNKNOWN_COST to sub else continue
+                val total = best[i] + cost + SEGMENT_PENALTY
+                if (total < best[i + len]) {
+                    best[i + len] = total
+                    from[i + len] = i
+                    word[i + len] = w
+                }
+            }
+        }
+        if (best[n] == Int.MAX_VALUE) return null
+        val parts = ArrayList<String>()
+        var p = n
+        while (p > 0) {
+            parts += word[p]!!
+            p = from[p]
+        }
+        if (parts.size < 2) return null
+        return parts.asReversed().joinToString("")
+    }
+
+    /**
+     * 文の一部（よみ）をどう書くかとそのコスト。
+     * Mozc の辞書は文法（品詞のつながり）のコストなしではひらがなの断片が安くなりすぎるので、
+     * 助詞・助動詞は辞書より優先してひらがなにし、それ以外は最低コストを設けて、漢字の表記を少し優先する。
+     */
+    private fun segment(sub: String): Pair<Int, String>? {
+        if (sub in FUNCTION_WORDS) return FUNCTION_COST to sub
+        val words = main.find(sub)?.words ?: return null
+        val bestCost = words.first().first
+        val chosen = words.firstOrNull { it.first <= bestCost + PREFER_MARGIN && it.second.any(::isKanji) }
+            ?: words.firstOrNull { it.first <= bestCost + PREFER_MARGIN && it.second.none(::isKatakana) }
+            ?: words.first()
+        return maxOf(bestCost, MIN_CONTENT_COST) to chosen.second
+    }
+
     companion object {
+        private const val MAX_CONVERT_LENGTH = 24
+        private const val MAX_SEGMENT = 10
+        /** 1 語増えるごとに足すコスト（細かく区切りすぎないように） */
+        private const val SEGMENT_PENALTY = 2000
+        private const val UNKNOWN_COST = 20000
+        private const val FUNCTION_COST = 300
+        private const val MIN_CONTENT_COST = 3000
+        /** これだけのコスト差なら漢字（またはカタカナ以外）の表記を優先する */
+        private const val PREFER_MARGIN = 1500
+
+        /** ひらがなのまま使う助詞・助動詞など */
+        private val FUNCTION_WORDS = setOf(
+            "は", "が", "を", "に", "へ", "で", "と", "も", "の", "や", "か", "ね", "よ", "な", "わ", "さ",
+            "ので", "のに", "から", "まで", "より", "けど", "けれど", "ながら", "だけ", "しか", "ばかり", "など", "って",
+            "だ", "です", "でした", "でしょう", "だった", "ます", "ました", "ません", "ませんでした", "ましょう",
+            "たい", "ない", "なかった", "た", "て", "ている", "ています", "ていた", "ていました", "てる",
+            "いる", "います", "いた", "いました", "ある", "あります", "あった", "ありました",
+            "する", "します", "した", "しました", "して", "しない", "される", "された",
+            "れる", "られる", "せる", "させる", "う", "よう", "ください", "ございます", "ございました",
+        )
+
+        private fun isKanji(ch: Char) = ch in '\u4E00'..'\u9FFF' || ch in '\u3400'..'\u4DBF' || ch == '々'
+        private fun isKatakana(ch: Char) = ch in '\u30A1'..'\u30FA'
+
         /** ja_prefix.bin に収録しているよみの長さ（tools/build_ja_dictionary.py の PREFIX_MAX と同じ） */
         const val PREFIX_MAX = 3
         private const val SCAN_LIMIT = 2000

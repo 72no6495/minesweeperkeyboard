@@ -69,9 +69,17 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     /** 英語入力で「単語＋スペース」を入れた時刻（スペース 2 回でピリオド用） */
     private var lastWordSpaceAt = 0L
 
-    /** 予測候補（全件）と、ステータスバーに表示中のページ */
+    /** 予測候補と、空白キーで選んでいる候補（-1 なら選択なし） */
     private var candidateList: List<String> = emptyList()
-    private var candidatePage = 0
+    private var highlight = -1
+    /** 候補が「直前の単語の次に来そうな語」のときの、その直前の単語 */
+    private var nextWordFor: String? = null
+    /** 最後に確定した日本語の単語（次の単語の予測と学習に使う） */
+    private var lastWord: String? = null
+
+    /** 普通のキーボードの🚩キー：次に押したキーに旗を立てる／（長押しで）押している間ずっと旗モード */
+    private var flagArmed = false
+    private var flagLocked = false
     @Volatile
     private var candidateRequest = 0
 
@@ -87,7 +95,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     }
     /** 裏のマインスイーパーが終わったら少し待って新しいゲームにする */
     private val backgroundRestart = Runnable {
-        if (mode == KeyboardMode.QWERTY_BACKGROUND && engine?.isGameOver == true) newGame()
+        if (mode == KeyboardMode.QWERTY_BACKGROUND && engine?.isGameOver == true) newGame(carryFlags = true)
     }
     private val saveLearning = Runnable { Learning.save(filesDir) }
 
@@ -121,8 +129,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         this.root = root
 
         statusBar = StatusBarView(this).also {
-            it.onFaceClick = { newGame() }
-            it.onCandidateClick = { word -> pickCandidate(word) }
+            it.onFaceClick = { onFaceTap() }
+            it.onFaceLongClick = { onFaceLongPress() }
+            it.onCandidateClick = { index -> pickCandidate(index) }
             root.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
 
@@ -270,10 +279,25 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             KeyboardMode.CLASSIC -> classicTap(row, col)
             KeyboardMode.QWERTY_GAME -> qwertyGameTap(row, col)
             KeyboardMode.QWERTY_BACKGROUND -> {
-                // 入力を先に済ませ、裏のゲームはその後で進める
                 keyFeedback(boardView, AudioManager.FX_KEYPRESS_STANDARD)
-                typeKey(row, col)
-                if (prefs.backgroundGameEnabled) handler.post { backgroundOpen(row, col) }
+                when {
+                    grid.isFlagKey(row, col) -> {
+                        // 🚩キー：次に押したキーに旗（もう一度押すと取り消し）
+                        flagArmed = !flagArmed
+                        if (!flagArmed) flagLocked = false
+                        boardView?.invalidate()
+                    }
+                    flagArmed -> {
+                        backgroundToggleFlag(row, col)
+                        if (!flagLocked) flagArmed = false
+                        boardView?.invalidate()
+                    }
+                    else -> {
+                        // 入力を先に済ませ、裏のゲームはその後で進める
+                        typeKey(row, col)
+                        if (prefs.backgroundGameEnabled) handler.post { backgroundOpen(row, col) }
+                    }
+                }
             }
         }
     }
@@ -294,13 +318,20 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
                     toggleFlag(row, col)
                 }
             }
-            KeyboardMode.QWERTY_BACKGROUND -> when (prefs.longPressAction) {
+            KeyboardMode.QWERTY_BACKGROUND -> if (grid.isFlagKey(row, col)) {
+                // 🚩キーの長押し：解除するまで旗を立て続けるモード
+                flagLocked = !flagLocked
+                flagArmed = flagLocked
+                boardView?.invalidate()
+            } else if (flagArmed) {
+                onCellTap(row, col)
+            } else when (prefs.longPressAction) {
                 LongPressAction.SYMBOL -> {
                     keyFeedback(boardView, AudioManager.FX_KEYPRESS_STANDARD)
                     typeSymbol(grid.symbolAt(row, col))
                 }
                 LongPressAction.FLAG ->
-                    if (prefs.backgroundGameEnabled && !e.isGameOver && !e.cell(row, col).isOpen) toggleFlag(row, col)
+                    if (prefs.backgroundGameEnabled && !e.cell(row, col).isOpen) backgroundToggleFlag(row, col)
                     else onCellTap(row, col)
                 // 長押しなしの設定では盤面側で長押しを無効にしているが、念のため普通に入力する
                 LongPressAction.NONE -> onCellTap(row, col)
@@ -355,7 +386,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         if (mode != KeyboardMode.QWERTY_BACKGROUND) return
         if (engine?.isGameOver == true) {
             handler.removeCallbacks(backgroundRestart)
-            newGame()
+            newGame(carryFlags = true)
         }
         val e = engine ?: return
         if (!e.inBounds(row, col)) return
@@ -366,6 +397,16 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         handleResult(e, result, commitResults = prefs.backgroundResults)
         if (wasReady && e.state == MinesweeperEngine.State.PLAYING) startTimer()
         if (e.isGameOver) handler.postDelayed(backgroundRestart, 1500L)
+    }
+
+    /** 普通のキーボードの裏のゲームに旗を立てる／外す（終わったゲームなら旗を引き継いで新しいゲームに） */
+    private fun backgroundToggleFlag(row: Int, col: Int) {
+        if (!prefs.backgroundGameEnabled) return
+        if (engine?.isGameOver == true) {
+            handler.removeCallbacks(backgroundRestart)
+            newGame(carryFlags = true)
+        }
+        toggleFlag(row, col)
     }
 
     private fun toggleFlag(row: Int, col: Int) {
@@ -414,9 +455,19 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         updateStatus()
     }
 
-    private fun newGame() {
+    /**
+     * 新しいゲーム。普通のキーボードでは🚩キーのマスをゲームから外し、
+     * [carryFlags] なら前のゲームで最後に立てた旗を最大 3 つ残す（その位置には地雷を置かない）。
+     */
+    private fun newGame(carryFlags: Boolean = false) {
         val config = prefs.boardConfigFor(mode)
-        engine = MinesweeperEngine(config.rows, config.cols, config.mines)
+        val previous = engine
+        val carried = if (carryFlags && mode == KeyboardMode.QWERTY_BACKGROUND && previous != null &&
+            engineConfig == config && engineMode == mode
+        ) previous.recentFlags(CARRIED_FLAGS) else emptyList()
+        engine = MinesweeperEngine(config.rows, config.cols, config.mines).also { e ->
+            if (mode == KeyboardMode.QWERTY_BACKGROUND) e.prepare(blocked = listOfNotNull(grid.flagPosition), flags = carried)
+        }
         engineConfig = config
         engineMode = mode
         handler.removeCallbacks(timerTick)
@@ -430,7 +481,11 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     private fun applySettings(forceNewGame: Boolean) {
         mode = prefs.keyboardMode
-        grid = prefs.keyGrid()
+        grid = prefs.keyGrid(flagKey = mode == KeyboardMode.QWERTY_BACKGROUND && prefs.backgroundGameEnabled)
+        if (mode != KeyboardMode.QWERTY_BACKGROUND) {
+            flagArmed = false
+            flagLocked = false
+        }
         val languages = prefs.enabledLanguages
         composer.language = prefs.inputLanguage.takeIf { it in languages } ?: languages.first()
         composer.punctuation = prefs.punctuationStyle
@@ -458,11 +513,19 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             keyHeightDp = prefs.keyHeightDp
             labelScale = prefs.keyTextPercent / 100f
             keyPreview = prefs.keyPreview
-            longPressMs =
-                if (mode == KeyboardMode.QWERTY_BACKGROUND && prefs.longPressAction == LongPressAction.NONE) 0L
-                else prefs.longPressMs.toLong()
+            longPressMs = prefs.longPressMs.toLong()
+            // 長押しで記号を入力するときは、拡大表示にその記号を出す
+            val g = grid
+            longPressLabel =
+                if (mode == KeyboardMode.QWERTY_BACKGROUND && prefs.longPressAction == LongPressAction.SYMBOL) {
+                    { r, c -> if (g.isFlagKey(r, c)) null else g.symbolAt(r, c).toString() }
+                } else {
+                    null
+                }
+            keyToggled = { r, c -> flagArmed && g.isFlagKey(r, c) }
             invalidate()
         }
+        statusBar?.hapticsEnabled = prefs.hapticsEnabled
         statusBar?.invalidate()
         globeButton?.visibility = if (prefs.showGlobeKey) View.VISIBLE else View.GONE
         textSettings = prefs.textSettings()
@@ -571,7 +634,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     /** QWERTY のキーを 1 つ打つ */
     private fun typeKey(row: Int, col: Int) {
-        if (row !in 0 until grid.rowCount || col !in 0 until grid.colCount) return
+        if (row !in 0 until grid.rowCount || col !in 0 until grid.colCount || grid.isFlagKey(row, col)) return
+        // 空白キーで候補を選んでいる途中なら、その候補を確定してから次の文字へ
+        if (highlight >= 0) pickCandidate(highlight)
         if (symbols) {
             typeSymbol(grid.symbolAt(row, col))
             return
@@ -586,6 +651,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         if (out.isNotEmpty()) {
             commit(out)
             lastWordSpaceAt = 0
+            lastWord = null
             updateAutoShift()
         } else {
             updateComposing()
@@ -599,11 +665,14 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     /** 記号はそのまま確定して入力する */
     private fun typeSymbol(ch: Char) {
+        if (highlight >= 0) pickCandidate(highlight)
         finishComposing()
         commit(ch.toString())
         lastWordSpaceAt = 0
+        lastWord = null
         updateAutoShift()
         refreshKeyLabels()
+        updateCandidates()
     }
 
     private fun updateComposing() {
@@ -613,30 +682,43 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     /** 変換中の文字列をそのまま確定 */
     private fun finishComposing() {
         if (composer.isEmpty()) return
-        commit(composer.finish())
+        val text = composer.finish()
+        highlight = -1
+        commit(text)
+        lastWord = text.takeIf { composer.language == InputLanguage.ROMAJI }
         updateCandidates()
     }
 
     private fun resetComposing() {
         composer.clear()
+        highlight = -1
+        lastWord = null
         updateCandidates()
     }
 
-    private fun pickCandidate(word: String) {
+    /** 候補を確定する（変換中なら変換の結果として、入力していなければ「次の単語」として） */
+    private fun pickCandidate(index: Int) {
+        val word = candidateList.getOrNull(index) ?: return
         keyFeedback(statusBar, AudioManager.FX_KEYPRESS_STANDARD)
         val reading = composer.reading
-        if (prefs.learningEnabled && reading.isNotEmpty()) {
-            workerHandler.post { learning.learn(reading, word) }
+        val previous = if (composer.isEmpty()) nextWordFor else lastWord
+        if (prefs.learningEnabled) {
+            workerHandler.post {
+                if (reading.isNotEmpty()) learning.learn(reading, word)
+                if (previous != null) learning.learnNext(previous, word)
+            }
             workerHandler.removeCallbacks(saveLearning)
             workerHandler.postDelayed(saveLearning, 2000L)
         }
         composer.clear()
+        highlight = -1
         if (isEnglish() && prefs.spaceAfterCandidate) {
             commit("$word ")
             lastWordSpaceAt = SystemClock.uptimeMillis()
         } else {
             commit(word)
         }
+        lastWord = word.takeIf { !isEnglish() }
         updateAutoShift()
         refreshKeyLabels()
         updateCandidates()
@@ -644,13 +726,33 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     /**
      * 予測候補を別スレッドで検索する（文字入力を待たせないため）。
-     * 学習した単語 → ユーザー辞書 → 日本語辞書（ローマ字入力時）の順。
+     * - 入力中：学習した単語 → ユーザー辞書 → 日本語辞書（文節に区切った変換・完全一致・続き）
+     *   ローマ字の途中（"かんj"）なら続きのかなを補ったよみ（かんじ・かんじゃ…）でも探す
+     * - 日本語の単語を確定した直後：その次によく使った単語と、助詞などのつなぎの言葉
      */
     private fun updateCandidates() {
-        val reading = composer.reading
         val request = ++candidateRequest
-        if (!mode.isQwerty || !prefs.predictionEnabled || reading.isEmpty()) {
-            showCandidates(emptyList())
+        highlight = -1
+        if (!mode.isQwerty || !prefs.predictionEnabled) {
+            showCandidates(emptyList(), null)
+            return
+        }
+        val reading = composer.reading
+        val variants = composer.readingVariants
+        val previous = lastWord
+        if (variants.isEmpty()) {
+            // 何も入力していない：直前の単語の続きを出す
+            if (previous == null || composer.language != InputLanguage.ROMAJI) {
+                showCandidates(emptyList(), null)
+                return
+            }
+            val useLearning = prefs.learningEnabled
+            workerHandler.post {
+                if (request != candidateRequest) return@post
+                val learned = if (useLearning) learning.lookupNext(previous) else emptyList()
+                val list = (learned + NEXT_WORDS).distinct().take(MAX_CANDIDATES)
+                handler.post { if (request == candidateRequest) showCandidates(list, previous) }
+            }
             return
         }
         val useLearning = prefs.learningEnabled
@@ -664,23 +766,37 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         workerHandler.post {
             // 次の入力が来ていたら、この検索は捨てる
             if (request != candidateRequest) return@post
-            val learned = if (useLearning) learning.lookup(reading) else emptyList()
-            val user = userDictionary.lookup(reading, limit = MAX_USER_CANDIDATES)
-            val system = systemDictionary?.lookup(reading).orEmpty()
-            val list = (learned + user + system).distinct().take(MAX_CANDIDATES)
-            handler.post { if (request == candidateRequest) showCandidates(list) }
+            val result = LinkedHashSet<String>()
+            if (useLearning) variants.forEach { result += learning.lookup(it) }
+            variants.forEach { result += userDictionary.lookup(it, limit = MAX_USER_CANDIDATES) }
+            if (systemDictionary != null) {
+                // よみの候補が複数あるときは、それぞれの上位を交互に並べる
+                val lists = variants.map { systemDictionary.lookup(it, limit = MAX_CANDIDATES) }
+                var i = 0
+                while (result.size < MAX_CANDIDATES && lists.any { i < it.size }) {
+                    for (l in lists) if (i < l.size) result += l[i]
+                    i++
+                }
+            }
+            if (reading.isNotEmpty() && variants.size > 1) result += reading
+            val list = result.take(MAX_CANDIDATES)
+            handler.post { if (request == candidateRequest) showCandidates(list, null) }
         }
     }
 
-    private fun showCandidates(list: List<String>) {
+    private fun showCandidates(list: List<String>, nextFor: String?) {
         candidateList = list
-        candidatePage = 0
-        showCandidatePage()
+        nextWordFor = nextFor
+        highlight = -1
+        statusBar?.candidates = list
+        statusBar?.highlighted = -1
     }
 
-    private fun showCandidatePage() {
-        val from = candidatePage * CANDIDATES_PER_PAGE
-        statusBar?.candidates = candidateList.drop(from).take(CANDIDATES_PER_PAGE)
+    /** 空白キーで次の候補を選ぶ（変換中の文字列もその候補に置き換えて表示） */
+    private fun selectNextCandidate() {
+        highlight = (highlight + 1) % candidateList.size
+        statusBar?.highlighted = highlight
+        currentInputConnection?.setComposingText(candidateList[highlight], 1)
     }
 
     private fun onSpace() {
@@ -689,13 +805,12 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             return
         }
         when {
-            composer.isEmpty() -> commit(" ")
-            // 候補が 1 ページに収まらなければ次のページへ
-            candidateList.size > CANDIDATES_PER_PAGE -> {
-                val pages = (candidateList.size + CANDIDATES_PER_PAGE - 1) / CANDIDATES_PER_PAGE
-                candidatePage = (candidatePage + 1) % pages
-                showCandidatePage()
+            composer.isEmpty() -> {
+                lastWord = null
+                commit(" ")
+                updateCandidates()
             }
+            candidateList.isNotEmpty() -> selectNextCandidate()
             else -> finishComposing()
         }
     }
@@ -726,23 +841,72 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     private fun onEnter() {
         lastWordSpaceAt = 0
-        if (!composer.isEmpty()) finishComposing() else sendEnter()
+        when {
+            highlight >= 0 -> pickCandidate(highlight)
+            !composer.isEmpty() -> finishComposing()
+            else -> {
+                lastWord = null
+                sendEnter()
+                updateCandidates()
+            }
+        }
         updateAutoShift()
         refreshKeyLabels()
     }
 
     private fun onBackspace() {
         lastWordSpaceAt = 0
-        if (composer.backspace()) {
-            updateComposing()
-            updateCandidates()
-        } else {
-            deleteOne()
-            if (mode.isQwerty && isEnglish()) {
-                updateAutoShift()
-                refreshKeyLabels()
+        when {
+            // 候補を選んでいる途中なら、選ぶ前（よみ）に戻す
+            highlight >= 0 -> {
+                highlight = -1
+                statusBar?.highlighted = -1
+                updateComposing()
+            }
+            composer.backspace() -> {
+                updateComposing()
+                updateCandidates()
+            }
+            else -> {
+                lastWord = null
+                deleteOne()
+                if (nextWordFor != null) updateCandidates()
+                if (mode.isQwerty && isEnglish()) {
+                    updateAutoShift()
+                    refreshKeyLabels()
+                }
             }
         }
+    }
+
+    /** ニコちゃんのタップ：QWERTY 系では 1 文字削除、クラシックでは新しいゲーム */
+    private fun onFaceTap() {
+        if (mode.isQwerty) {
+            keyFeedback(statusBar, AudioManager.FX_KEYPRESS_DELETE)
+            onBackspace()
+        } else {
+            newGame()
+        }
+    }
+
+    /** ニコちゃんの長押し：QWERTY 系では入力欄の文字をすべて消す */
+    private fun onFaceLongPress() {
+        if (!mode.isQwerty) return
+        composer.clear()
+        highlight = -1
+        lastWord = null
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        ic.setComposingText("", 1)
+        ic.finishComposingText()
+        if (!ic.getSelectedText(0).isNullOrEmpty()) ic.commitText("", 1)
+        val before = ic.getTextBeforeCursor(CLEAR_ALL_LIMIT, 0)?.length ?: 0
+        val after = ic.getTextAfterCursor(CLEAR_ALL_LIMIT, 0)?.length ?: 0
+        if (before > 0 || after > 0) ic.deleteSurroundingText(before, after)
+        ic.endBatchEdit()
+        updateCandidates()
+        updateAutoShift()
+        refreshKeyLabels()
     }
 
     /**
@@ -853,8 +1017,16 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     }
 
     companion object {
-        private const val CANDIDATES_PER_PAGE = 4
-        private const val MAX_CANDIDATES = 24
+        private const val MAX_CANDIDATES = 60
+        /** 普通のキーボードでゲームが終わっても残す旗の数 */
+        private const val CARRIED_FLAGS = 3
+        private const val CLEAR_ALL_LIMIT = 100_000
+        /** 日本語の単語を確定した直後に出す、つなぎの言葉 */
+        private val NEXT_WORDS = listOf(
+            "を", "に", "は", "が", "の", "で", "と", "も", "へ", "から", "まで", "より",
+            "です", "ます", "でした", "ました", "ですね", "ですか", "します", "しました", "する", "した", "して",
+            "ね", "よ", "な", "って", "けど", "だけ", "など", "、", "。", "！", "？",
+        )
         private const val MAX_USER_CANDIDATES = 8
         private const val DOUBLE_SPACE_MS = 1000L
     }

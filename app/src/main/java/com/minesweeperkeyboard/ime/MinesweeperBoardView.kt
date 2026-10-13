@@ -74,6 +74,16 @@ class MinesweeperBoardView(context: Context) : View(context) {
             invalidate()
         }
 
+    /** 長押ししたときに入力される文字（長押し中の拡大表示に使う） */
+    var longPressLabel: ((row: Int, col: Int) -> String?)? = null
+
+    /** 押されたままの表示にするキー（🚩キーの「次のキーに旗」待ちなど） */
+    var keyToggled: ((row: Int, col: Int) -> Boolean)? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** ゴースト表示でゲームを描くか（false なら普通のキーボードだけ） */
     var ghostGameVisible = true
         set(value) {
@@ -122,6 +132,8 @@ class MinesweeperBoardView(context: Context) : View(context) {
     private val keyPointers = LinkedHashMap<Int, KeyPointer>()
     private var previewRow = -1
     private var previewCol = -1
+    /** 拡大表示しているキーが長押しされた（長押しの文字を表示する） */
+    private var previewLongPress = false
 
     private fun isPressed(r: Int, c: Int): Boolean =
         if (style == Style.CLASSIC) r == pressedRow && c == pressedCol
@@ -215,7 +227,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
     /** 押したキーの文字を上に大きく表示する（盤面の中に収まるよう位置を調整） */
     private fun drawPreview(canvas: Canvas, e: MinesweeperEngine, r: Int, c: Int) {
         if (!e.inBounds(r, c)) return
-        val text = keyLabel?.invoke(r, c) ?: return
+        val text = (if (previewLongPress) longPressLabel?.invoke(r, c) else null) ?: keyLabel?.invoke(r, c) ?: return
         val w = cellW * 1.4f
         val h = cellH * 1.25f
         val cx = boardLeft + c * cellW + cellW / 2f
@@ -284,7 +296,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
         val cx = l + cellW / 2f
         val cy = t + cellH / 2f
         val unit = min(cellW, cellH)
-        val pressed = isPressed(r, c)
+        val pressed = isPressed(r, c) || keyToggled?.invoke(r, c) == true
 
         canvas.drawRect(l, t, rt, b, bgPaint)
         ClassicStyle.drawBevel(canvas, l, t, rt, b, bevel, raised = !pressed)
@@ -400,6 +412,10 @@ class MinesweeperBoardView(context: Context) : View(context) {
                         if (!pointer.handled && keyPointers[id] === pointer) {
                             pointer.handled = true
                             if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            if (previewRow == r && previewCol == c) {
+                                previewLongPress = true
+                                invalidate()
+                            }
                             listener?.onCellLongPress(r, c)
                         }
                     })
@@ -407,6 +423,7 @@ class MinesweeperBoardView(context: Context) : View(context) {
                     if (longPressMs > 0) postDelayed(pointer.longPress, longPressMs)
                     previewRow = r
                     previewCol = c
+                    previewLongPress = false
                     if (keyPointers.size == 1 && engine?.isGameOver == false) listener?.onBoardPressChanged(true)
                 }
                 invalidate()
@@ -420,9 +437,11 @@ class MinesweeperBoardView(context: Context) : View(context) {
                 if (keyPointers.isEmpty()) {
                     previewRow = -1
                     previewCol = -1
+                    previewLongPress = false
                     listener?.onBoardPressChanged(false)
                 } else {
                     keyPointers.values.last().let { previewRow = it.row; previewCol = it.col }
+                    previewLongPress = false
                 }
                 invalidate()
             }

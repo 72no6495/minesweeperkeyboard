@@ -150,7 +150,7 @@ class ImePrefs(context: Context) {
         get() = sp.getBoolean(KEY_LEARNING, true)
         set(v) = sp.edit().putBoolean(KEY_LEARNING, v).apply()
 
-    fun keyGrid() = KeyGrid(keyLayout, numberRow)
+    fun keyGrid(flagKey: Boolean = false) = KeyGrid(keyLayout, numberRow, flagKey)
 
     private fun keySet(key: String, default: List<String>): Set<String> =
         sp.getStringSet(key, null) ?: default.toSet()

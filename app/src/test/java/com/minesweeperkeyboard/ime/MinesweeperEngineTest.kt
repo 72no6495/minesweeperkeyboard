@@ -172,4 +172,46 @@ class MinesweeperEngineTest {
         assertEquals(listOf("おはよう", "こんにちは"), TextGimmick.splitUnits("おはよう, こんにちは,"))
         assertEquals(listOf("草", "ｗ"), TextGimmick.splitUnits("草、ｗ"))
     }
+
+    @Test
+    fun blockedAndPresetFlagsNeverGetMines() {
+        repeat(100) { seed ->
+            val e = engine(4, 10, 20, seed)
+            val blocked = 3 to 0
+            val flags = listOf(0 to 0, 0 to 9, 3 to 9)
+            e.prepare(blocked = listOf(blocked), flags = flags)
+            assertEquals(3, e.flagCount)
+            e.open(1, 5)
+            assertFalse(e.cell(3, 0).isMine)
+            flags.forEach { (r, c) -> assertFalse(e.cell(r, c).isMine) }
+            // 使わないマスは開けず、旗も立てられない
+            assertTrue(e.open(3, 0).isNoop)
+            assertFalse(e.toggleFlag(3, 0))
+            val mines = (0 until 4).sumOf { r -> (0 until 10).count { c -> e.cell(r, c).isMine } }
+            assertEquals(e.mineCount, mines)
+        }
+    }
+
+    @Test
+    fun winIgnoresBlockedCells() {
+        val e = engine(5, 5, 1)
+        e.prepare(blocked = listOf(4 to 4))
+        e.setMinesForTest(listOf(0 to 0))
+        val r = e.open(2, 2)
+        assertTrue(r.won)
+        assertFalse(e.cell(4, 4).isOpen)
+        assertEquals(23, e.openedCount)
+    }
+
+    @Test
+    fun recentFlagsNewestFirst() {
+        val e = engine(5, 5, 3)
+        e.toggleFlag(0, 0)
+        e.toggleFlag(1, 1)
+        e.toggleFlag(2, 2)
+        e.toggleFlag(3, 3)
+        e.toggleFlag(1, 1) // 外した旗は含まない
+        assertEquals(listOf(3 to 3, 2 to 2, 0 to 0), e.recentFlags(3))
+        assertEquals(listOf(3 to 3), e.recentFlags(1))
+    }
 }

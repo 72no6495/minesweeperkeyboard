@@ -43,6 +43,21 @@ class RomajiConverter {
         }
     }
 
+    /**
+     * 未確定のアルファベットの続きとしてありうるかな（予測変換用）。
+     * 例："k" → か・き・く・け・こ…、"sh" → しゃ・し・しゅ…
+     */
+    fun pendingCompletions(limit: Int = 8): List<String> {
+        val p = pending
+        if (p.isEmpty()) return emptyList()
+        return TABLE.entries
+            .filter { it.key.length > p.length && it.key.startsWith(p) }
+            .sortedBy { it.key.length }
+            .map { it.value }
+            .distinct()
+            .take(limit)
+    }
+
     /** 未確定部分も含めて確定させた文字列（末尾の "n" は「ん」） */
     fun flush(): String {
         if (pendingBuf.toString() == "n") {
