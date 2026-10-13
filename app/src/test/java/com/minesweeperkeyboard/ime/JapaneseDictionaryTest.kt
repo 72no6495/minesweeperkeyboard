@@ -93,4 +93,24 @@ class JapaneseDictionaryTest {
         assertEquals("マインスイーパー", JapaneseDictionary.toKatakana("まいんすいーぱー"))
         assertEquals("ヴ", JapaneseDictionary.toKatakana("ゔ"))
     }
+
+    @Test
+    fun convertSentence() {
+        val dict = JapaneseDictionary(
+            file(
+                "わたし" to listOf(0 to "わたし", 263 to "私"),
+                "がくせい" to listOf(3000 to "学生"),
+                "です" to listOf(0 to "デス", 40 to "です"),
+                "は" to listOf(0 to "は", 400 to "葉"),
+                "が" to listOf(0 to "が"),
+                "く" to listOf(0 to "く"),
+            ),
+            null,
+        )
+        // 助詞・助動詞はひらがな、漢字の表記を優先
+        assertEquals("私は学生です", dict.convert("わたしはがくせいです"))
+        assertEquals("私は学生です", dict.lookup("わたしはがくせいです").first())
+        // 1 語だけなら変換文は作らない
+        assertNull(dict.convert("がくせい"))
+    }
 }

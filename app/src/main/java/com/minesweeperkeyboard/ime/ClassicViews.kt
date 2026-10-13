@@ -5,12 +5,18 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import android.view.ViewConfiguration
+import android.widget.OverScroller
+import kotlin.math.abs
 
 /**
  * 上部のステータスバー：残り地雷数 LED ／ ニコちゃん ／ タイマー LED。
- * 予測変換の候補があるときは LED の代わりにニコちゃんの左右へ候補ボタンを並べる。
+ * 予測変換の候補があるときは LED の代わりに候補を並べる。候補はニコちゃんの左から右へ 1 本の帯としてつながっていて、
+ * 左右にスワイプしてスクロールできる。
  */
 class StatusBarView(context: Context) : View(context) {
 
@@ -21,20 +27,64 @@ class StatusBarView(context: Context) : View(context) {
     var face = ClassicStyle.Face.SMILE
         set(v) { if (field != v) { field = v; invalidate() } }
 
-    /** 予測変換の候補（最大 4 つ。左に 1・2 番目、右に 3・4 番目。2 つ以下なら左右に 1 つずつ） */
+    /** 予測変換の候補 */
     var candidates: List<String> = emptyList()
-        set(v) { if (field != v) { field = v.take(4); pressedCandidate = -1; invalidate() } }
+        set(v) {
+            if (field == v) return
+            field = v
+            highlighted = -1
+            pressedCandidate = -1
+            scroller.forceFinished(true)
+            scrollPos = 0f
+            itemsDirty = true
+            invalidate()
+        }
+
+    /** 選択中（空白キーで選んでいる）の候補。-1 なら選択なし */
+    var highlighted = -1
+        set(v) {
+            field = v
+            if (v >= 0) scrollIntoView(v)
+            invalidate()
+        }
+
+    var hapticsEnabled = true
 
     var onFaceClick: (() -> Unit)? = null
-    var onCandidateClick: ((String) -> Unit)? = null
+    var onFaceLongClick: (() -> Unit)? = null
+    var onCandidateClick: ((Int) -> Unit)? = null
 
     private val density = resources.displayMetrics.density
     private val desiredHeight = (46 * density).toInt()
     private val border = 3f * density
     private val faceRect = RectF()
     private var facePressed = false
+    private var faceLongPressed = false
+    private val faceLongPress = Runnable {
+        if (facePressed) {
+            faceLongPressed = true
+            facePressed = false
+            if (hapticsEnabled) performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            onFaceLongClick?.invoke()
+            invalidate()
+        }
+    }
 
-    private val candidateRects = ArrayList<RectF>()
+    // 候補の帯：ニコちゃんの左の領域と右の領域を 1 本につないで表示する
+    private val leftArea = RectF()
+    private val rightArea = RectF()
+    private var itemStart = FloatArray(0)
+    private var itemWidth = FloatArray(0)
+    private var contentWidth = 0f
+    private var itemsDirty = true
+    private var scrollPos = 0f
+    private val scroller = OverScroller(context)
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var velocityTracker: VelocityTracker? = null
+    private var downX = 0f
+    private var lastX = 0f
+    private var dragging = false
+    private var trackingCandidates = false
     private var pressedCandidate = -1
 
     private val bg = Paint().apply { color = ClassicStyle.FACE }
@@ -48,7 +98,46 @@ class StatusBarView(context: Context) : View(context) {
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), desiredHeight)
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        itemsDirty = true
+    }
+
+    private val visibleWidth: Float get() = leftArea.width() + rightArea.width()
+    private val maxScroll: Float get() = (contentWidth - visibleWidth).coerceAtLeast(0f)
+
+    private fun layoutAreas() {
+        val h = height.toFloat()
+        val inner = h - border * 4
+        faceRect.set((width - inner) / 2f, (h - inner) / 2f, (width + inner) / 2f, (h + inner) / 2f)
+        val margin = border * 3
+        val top = (h - inner) / 2f
+        leftArea.set(margin, top, faceRect.left - border * 2, top + inner)
+        rightArea.set(faceRect.right + border * 2, top, width - margin, top + inner)
+    }
+
+    private fun layoutItems() {
+        layoutAreas()
+        candidatePaint.textSize = leftArea.height() * 0.45f
+        val minW = 44f * density
+        val pad = 10f * density
+        val gap = border
+        itemStart = FloatArray(candidates.size)
+        itemWidth = FloatArray(candidates.size)
+        var x = 0f
+        for (i in candidates.indices) {
+            val w = maxOf(minW, minOf(candidatePaint.measureText(candidates[i]) + pad * 2, visibleWidth * 0.9f))
+            itemStart[i] = x
+            itemWidth[i] = w
+            x += w + gap
+        }
+        contentWidth = (x - gap).coerceAtLeast(0f)
+        scrollPos = scrollPos.coerceIn(0f, maxScroll)
+        itemsDirty = false
+    }
+
     override fun onDraw(canvas: Canvas) {
+        if (itemsDirty) layoutItems() else layoutAreas()
         val w = width.toFloat()
         val h = height.toFloat()
         bg.color = ClassicStyle.FACE
@@ -57,20 +146,18 @@ class StatusBarView(context: Context) : View(context) {
         // 凹んだパネル
         ClassicStyle.drawBevel(canvas, border, border, w - border, h - border, border * 0.7f, raised = false)
 
-        val inner = h - border * 4
-        val margin = border * 3
-        val faceSize = inner
-        faceRect.set((w - faceSize) / 2f, (h - faceSize) / 2f, (w + faceSize) / 2f, (h + faceSize) / 2f)
-
-        layoutCandidates(margin, inner)
         if (candidates.isEmpty()) {
+            val inner = faceRect.height()
+            val margin = border * 3
             val ledH = inner * 0.85f
             val ledW = ledH * 1.75f
             val ledTop = (h - ledH) / 2f
             ClassicStyle.drawLedCounter(canvas, RectF(margin, ledTop, margin + ledW, ledTop + ledH), remainingMines)
             ClassicStyle.drawLedCounter(canvas, RectF(w - margin - ledW, ledTop, w - margin, ledTop + ledH), seconds)
         } else {
-            for (i in candidateRects.indices) drawCandidate(canvas, candidateRects[i], candidates[i], i == pressedCandidate)
+            drawStrip(canvas, leftArea, 0f)
+            drawStrip(canvas, rightArea, leftArea.width())
+            drawScrollHints(canvas)
         }
 
         canvas.drawRect(faceRect, bg)
@@ -79,33 +166,37 @@ class StatusBarView(context: Context) : View(context) {
             border * 0.8f, raised = !facePressed,
         )
         val shift = if (facePressed) border * 0.4f else 0f
-        ClassicStyle.drawFace(canvas, faceRect.centerX() + shift, faceRect.centerY() + shift, faceSize * 0.85f, face)
+        ClassicStyle.drawFace(canvas, faceRect.centerX() + shift, faceRect.centerY() + shift, faceRect.height() * 0.85f, face)
     }
 
-    private fun layoutCandidates(margin: Float, inner: Float) {
-        candidateRects.clear()
-        if (candidates.isEmpty()) return
-        val top = (height - inner) / 2f
-        val bottom = top + inner
-        val gap = border
-        val left = RectF(margin, top, faceRect.left - gap * 2, bottom)
-        val right = RectF(faceRect.right + gap * 2, top, width - margin, bottom)
-        val (leftCount, rightCount) = if (candidates.size <= 2) 1 to 1 else 2 to 2
-        fun split(area: RectF, n: Int) {
-            val slotW = (area.width() - gap * (n - 1)) / n
-            for (i in 0 until n) {
-                val l = area.left + i * (slotW + gap)
-                candidateRects += RectF(l, area.top, l + slotW, area.bottom)
-            }
+    /** 帯のうち [area] に見えている部分を描く（[areaOffset] = 帯の中でこの領域が始まる位置） */
+    private fun drawStrip(canvas: Canvas, area: RectF, areaOffset: Float) {
+        if (area.width() <= 0f) return
+        canvas.save()
+        canvas.clipRect(area)
+        val origin = area.left - scrollPos - areaOffset
+        for (i in candidates.indices) {
+            val l = origin + itemStart[i]
+            val r = l + itemWidth[i]
+            if (r < area.left || l > area.right) continue
+            drawCandidate(canvas, RectF(l, area.top, r, area.bottom), candidates[i], i == pressedCandidate, i == highlighted)
         }
-        split(left, leftCount)
-        split(right, rightCount)
-        while (candidateRects.size > candidates.size) candidateRects.removeAt(candidateRects.size - 1)
+        canvas.restore()
     }
 
-    private fun drawCandidate(canvas: Canvas, r: RectF, text: String, pressed: Boolean) {
+    /** まだ続きがある側に小さな三角を出す */
+    private fun drawScrollHints(canvas: Canvas) {
+        if (maxScroll <= 0f) return
+        candidatePaint.textSize = leftArea.height() * 0.35f
+        val y = leftArea.centerY() - (candidatePaint.descent() + candidatePaint.ascent()) / 2f
+        if (scrollPos > 1f) canvas.drawText("◀", border * 2.2f, y, candidatePaint)
+        if (scrollPos < maxScroll - 1f) canvas.drawText("▶", width - border * 2.2f, y, candidatePaint)
+        candidatePaint.textSize = leftArea.height() * 0.45f
+    }
+
+    private fun drawCandidate(canvas: Canvas, r: RectF, text: String, pressed: Boolean, selected: Boolean) {
         canvas.drawRect(r, bg)
-        ClassicStyle.drawBevel(canvas, r.left, r.top, r.right, r.bottom, border * 0.7f, raised = !pressed)
+        ClassicStyle.drawBevel(canvas, r.left, r.top, r.right, r.bottom, border * 0.7f, raised = !(pressed || selected))
         var size = r.height() * 0.45f
         candidatePaint.textSize = size
         val maxW = r.width() - border * 3
@@ -114,55 +205,130 @@ class StatusBarView(context: Context) : View(context) {
             size *= maxW / textW
             candidatePaint.textSize = size
         }
-        val shift = if (pressed) border * 0.4f else 0f
+        val shift = if (pressed || selected) border * 0.4f else 0f
         val y = r.centerY() - (candidatePaint.descent() + candidatePaint.ascent()) / 2f
         canvas.drawText(text, r.centerX() + shift, y + shift, candidatePaint)
+        if (selected) {
+            // 選択中の候補は下に線を引く
+            candidatePaint.strokeWidth = border * 0.6f
+            canvas.drawLine(r.left + border * 2, r.bottom - border * 1.6f, r.right - border * 2, r.bottom - border * 1.6f, candidatePaint)
+        }
     }
 
-    private fun candidateAt(x: Float, y: Float): Int = candidateRects.indexOfFirst { it.contains(x, y) }
+    /** 画面上の x を帯の中の位置に変換（候補の領域外なら null） */
+    private fun stripPosition(x: Float, y: Float): Float? = when {
+        leftArea.contains(x, y) -> scrollPos + (x - leftArea.left)
+        rightArea.contains(x, y) -> scrollPos + leftArea.width() + (x - rightArea.left)
+        else -> null
+    }
+
+    private fun candidateAt(x: Float, y: Float): Int {
+        val pos = stripPosition(x, y) ?: return -1
+        for (i in candidates.indices) if (pos >= itemStart[i] && pos <= itemStart[i] + itemWidth[i]) return i
+        return -1
+    }
+
+    private fun scrollIntoView(i: Int) {
+        if (itemsDirty) layoutItems()
+        if (i !in itemStart.indices || visibleWidth <= 0f) return
+        val start = itemStart[i]
+        val end = start + itemWidth[i]
+        val target = when {
+            start < scrollPos -> start
+            end > scrollPos + visibleWidth -> end - visibleWidth
+            else -> return
+        }
+        scroller.forceFinished(true)
+        scrollPos = target.coerceIn(0f, maxScroll)
+    }
+
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            scrollPos = scroller.currX.toFloat().coerceIn(0f, maxScroll)
+            postInvalidateOnAnimation()
+        }
+    }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val inFace = faceRect.contains(event.x, event.y)
-        val cand = candidateAt(event.x, event.y)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                faceLongPressed = false
+                trackingCandidates = false
+                dragging = false
                 when {
-                    inFace -> facePressed = true
-                    cand >= 0 -> pressedCandidate = cand
+                    faceRect.contains(event.x, event.y) -> {
+                        facePressed = true
+                        postDelayed(faceLongPress, ViewConfiguration.getLongPressTimeout().toLong())
+                    }
+                    candidates.isNotEmpty() && stripPosition(event.x, event.y) != null -> {
+                        scroller.forceFinished(true)
+                        trackingCandidates = true
+                        downX = event.x
+                        lastX = event.x
+                        pressedCandidate = candidateAt(event.x, event.y)
+                        velocityTracker?.recycle()
+                        velocityTracker = VelocityTracker.obtain().apply { addMovement(event) }
+                    }
                     else -> return false
                 }
                 invalidate()
             }
             MotionEvent.ACTION_MOVE -> {
-                // 押した場所から指が外れたら押下を解除する
-                if (facePressed && !inFace) {
+                if (facePressed && !faceRect.contains(event.x, event.y)) {
                     facePressed = false
+                    removeCallbacks(faceLongPress)
                     invalidate()
                 }
-                if (pressedCandidate >= 0 && cand != pressedCandidate) {
-                    pressedCandidate = -1
-                    invalidate()
+                if (trackingCandidates) {
+                    velocityTracker?.addMovement(event)
+                    if (!dragging && abs(event.x - downX) > touchSlop) {
+                        dragging = true
+                        pressedCandidate = -1
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (dragging) {
+                        scrollPos = (scrollPos - (event.x - lastX)).coerceIn(0f, maxScroll)
+                        invalidate()
+                    }
+                    lastX = event.x
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (facePressed && inFace) {
+                removeCallbacks(faceLongPress)
+                if (facePressed && !faceLongPressed && faceRect.contains(event.x, event.y)) {
                     performClick()
                     onFaceClick?.invoke()
-                } else if (pressedCandidate >= 0 && cand == pressedCandidate) {
-                    performClick()
-                    candidates.getOrNull(cand)?.let { onCandidateClick?.invoke(it) }
+                } else if (trackingCandidates) {
+                    if (dragging) {
+                        velocityTracker?.apply {
+                            addMovement(event)
+                            computeCurrentVelocity(1000)
+                            scroller.fling(scrollPos.toInt(), 0, -xVelocity.toInt(), 0, 0, maxScroll.toInt(), 0, 0)
+                            postInvalidateOnAnimation()
+                        }
+                    } else if (pressedCandidate >= 0 && candidateAt(event.x, event.y) == pressedCandidate) {
+                        performClick()
+                        onCandidateClick?.invoke(pressedCandidate)
+                    }
                 }
-                facePressed = false
-                pressedCandidate = -1
-                invalidate()
+                resetTouch()
             }
             MotionEvent.ACTION_CANCEL -> {
-                facePressed = false
-                pressedCandidate = -1
-                invalidate()
+                removeCallbacks(faceLongPress)
+                resetTouch()
             }
         }
         return true
+    }
+
+    private fun resetTouch() {
+        facePressed = false
+        pressedCandidate = -1
+        trackingCandidates = false
+        dragging = false
+        velocityTracker?.recycle()
+        velocityTracker = null
+        invalidate()
     }
 
     override fun performClick(): Boolean = super.performClick()

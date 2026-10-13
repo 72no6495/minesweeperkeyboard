@@ -185,4 +185,41 @@ class QwertyInputTest {
         assertEquals(10, e.cols)
         assertFalse(e.open(1, 4).exploded)
     }
+
+    @Test
+    fun flagKeyLeftOfZ() {
+        val g = KeyGrid(flagKey = true)
+        assertEquals(3 to 0, g.flagPosition)
+        assertTrue(g.isFlagKey(3, 0))
+        assertEquals('z', g.keyAt(3, 1))
+        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, symbols = false))
+        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, symbols = true))
+        assertTrue(g.rows.all { it.length == KeyGrid.COLS })
+        assertEquals(null, KeyGrid().flagPosition)
+    }
+
+    @Test
+    fun readingVariantsCompletePendingRomaji() {
+        val c = Composer()
+        c.language = InputLanguage.ROMAJI
+        "kanj".forEach { c.type(it, false) }
+        // n の後に子音が来たので「ん」まで確定、j は未確定
+        assertEquals("かん", c.reading)
+        val variants = c.readingVariants
+        assertTrue("かんじ" in variants)
+        assertTrue("かんじゃ" in variants)
+        val plain = Composer().apply { language = InputLanguage.ROMAJI; "kanji".forEach { type(it, false) } }
+        assertEquals(listOf("かんじ"), plain.readingVariants)
+    }
+
+    @Test
+    fun learnNextWord() {
+        val m = LearningModel()
+        m.learnNext("電車", "に")
+        m.learnNext("電車", "に")
+        m.learnNext("電車", "で")
+        assertEquals(listOf("に", "で"), m.lookupNext("電車"))
+        // 次の単語の学習は普通の検索には出てこない
+        assertTrue(m.lookup("電").isEmpty())
+    }
 }

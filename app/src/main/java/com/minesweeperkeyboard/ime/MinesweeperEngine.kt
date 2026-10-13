@@ -18,7 +18,8 @@ class MinesweeperEngine(
 ) {
     val rows: Int = rows.coerceIn(MIN_ENGINE_SIZE, MAX_SIZE)
     val cols: Int = cols.coerceIn(MIN_ENGINE_SIZE, MAX_SIZE)
-    val mineCount: Int = mines.coerceIn(1, this.rows * this.cols - 1)
+    var mineCount: Int = mines.coerceIn(1, this.rows * this.cols - 1)
+        private set
 
     enum class State { READY, PLAYING, WON, LOST }
 
@@ -31,6 +32,8 @@ class MinesweeperEngine(
         var isExploded = false
         /** ゲームオーバー時に判明した誤った旗 */
         var isWrongFlag = false
+        /** ゲームに使わないマス（キーボードの🚩キーの位置など）。地雷にならず、開かない */
+        var isBlocked = false
     }
 
     /** 1回の操作（タップ／コード）の結果 */
@@ -57,10 +60,14 @@ class MinesweeperEngine(
     var flagCount: Int = 0
         private set
 
+    /** 旗を立てた順（クリア時の自動の旗は含まない） */
+    private val flagOrder = ArrayList<Pair<Int, Int>>()
+    private var blockedCount = 0
+
     private var startMillis = 0L
     private var endMillis = 0L
 
-    val totalSafeCells: Int get() = rows * cols - mineCount
+    val totalSafeCells: Int get() = rows * cols - mineCount - blockedCount
     val remainingMines: Int get() = mineCount - flagCount
     val isGameOver: Boolean get() = state == State.WON || state == State.LOST
 
@@ -78,11 +85,39 @@ class MinesweeperEngine(
         return (ms / 1000L).toInt().coerceIn(0, 999)
     }
 
+    /**
+     * 最初の操作の前に、使わないマス（[blocked]）と最初から立てておく旗（[flags]）を決める。
+     * どちらの位置にも地雷は置かない。
+     */
+    fun prepare(blocked: Collection<Pair<Int, Int>> = emptyList(), flags: Collection<Pair<Int, Int>> = emptyList()) {
+        check(state == State.READY) { "prepare() must be called before the first move" }
+        for ((r, c) in blocked) {
+            if (!inBounds(r, c) || cells[r][c].isBlocked) continue
+            cells[r][c].isBlocked = true
+            blockedCount++
+        }
+        for ((r, c) in flags) {
+            if (!inBounds(r, c)) continue
+            val cell = cells[r][c]
+            if (cell.isBlocked || cell.isFlagged) continue
+            cell.isFlagged = true
+            flagCount++
+            flagOrder += r to c
+        }
+        // 最初に開くマスの分を残して、地雷を置ける数に収める
+        val free = rows * cols - blockedCount - flagCount - 1
+        mineCount = mineCount.coerceIn(1, free.coerceAtLeast(1))
+    }
+
+    /** 最近立てた旗（新しい順に最大 [n] 個。今も立っているものだけ） */
+    fun recentFlags(n: Int): List<Pair<Int, Int>> =
+        flagOrder.asReversed().filter { (r, c) -> cells[r][c].isFlagged }.distinct().take(n)
+
     /** マスを開く */
     fun open(r: Int, c: Int): MoveResult {
         if (isGameOver || !inBounds(r, c)) return MoveResult()
         val target = cells[r][c]
-        if (target.isOpen || target.isFlagged) return MoveResult()
+        if (target.isOpen || target.isFlagged || target.isBlocked) return MoveResult()
 
         if (state == State.READY) {
             placeMines(r, c)
@@ -116,7 +151,7 @@ class MinesweeperEngine(
         var exploded = false
         for ((nr, nc) in neighbors(r, c)) {
             val n = cells[nr][nc]
-            if (n.isOpen || n.isFlagged) continue
+            if (n.isOpen || n.isFlagged || n.isBlocked) continue
             if (n.isMine) {
                 n.isExploded = true
                 exploded = true
@@ -135,9 +170,11 @@ class MinesweeperEngine(
     fun toggleFlag(r: Int, c: Int): Boolean {
         if (isGameOver || !inBounds(r, c)) return false
         val cell = cells[r][c]
-        if (cell.isOpen) return false
+        if (cell.isOpen || cell.isBlocked) return false
         cell.isFlagged = !cell.isFlagged
         flagCount += if (cell.isFlagged) 1 else -1
+        flagOrder.remove(r to c)
+        if (cell.isFlagged) flagOrder += r to c
         return true
     }
 
@@ -163,14 +200,20 @@ class MinesweeperEngine(
 
     private fun placeMines(safeR: Int, safeC: Int) {
         val total = rows * cols
-        // 最初のマスとその周囲を安全にする（地雷が多すぎて無理なら最初のマスだけ）
+        // 最初のマス・使わないマス・旗のマスには置かない
         val excluded = HashSet<Int>()
         excluded += safeR * cols + safeC
-        if (total - mineCount >= 9) {
-            neighbors(safeR, safeC).forEach { (r, c) -> excluded += r * cols + c }
+        for (r in 0 until rows) for (c in 0 until cols) {
+            if (cells[r][c].isBlocked || cells[r][c].isFlagged) excluded += r * cols + c
         }
+        // 最初のマスの周囲も安全にする（地雷が多すぎて無理なら最初のマスだけ）
+        val around = neighbors(safeR, safeC).map { (r, c) -> r * cols + c }.filter { it !in excluded }
+        if (total - excluded.size - around.size >= mineCount) excluded += around
         val candidates = (0 until total).filter { it !in excluded }.shuffled(random)
-        candidates.take(mineCount).forEach { idx -> cells[idx / cols][idx % cols].isMine = true }
+        val chosen = candidates.take(mineCount)
+        chosen.forEach { idx -> cells[idx / cols][idx % cols].isMine = true }
+        // 置ける場所が足りなかった場合は実際に置いた数に合わせる（クリア判定がずれないように）
+        mineCount = chosen.size
         computeAdjacency()
     }
 
@@ -188,13 +231,13 @@ class MinesweeperEngine(
         while (queue.isNotEmpty()) {
             val (r, c) = queue.removeFirst()
             val cell = cells[r][c]
-            if (cell.isOpen || cell.isFlagged || cell.isMine) continue
+            if (cell.isOpen || cell.isFlagged || cell.isMine || cell.isBlocked) continue
             cell.isOpen = true
             opened += r to c
             if (cell.adjacentMines == 0) {
                 for (n in neighbors(r, c)) {
                     val nc = cells[n.first][n.second]
-                    if (!nc.isOpen && !nc.isFlagged) queue.addLast(n)
+                    if (!nc.isOpen && !nc.isFlagged && !nc.isBlocked) queue.addLast(n)
                 }
             }
         }
