@@ -68,6 +68,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private var symbols = false
     /** 英語入力で「単語＋スペース」を入れた時刻（スペース 2 回でピリオド用） */
     private var lastWordSpaceAt = 0L
+    /** このキーボードが最後に入力欄を書き換えた時刻 */
+    private var lastEditAt = 0L
 
     /** 予測候補と、空白キーで選んでいる候補（-1 なら選択なし） */
     private var candidateList: List<String> = emptyList()
@@ -98,6 +100,14 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         if (mode == KeyboardMode.QWERTY_BACKGROUND && engine?.isGameOver == true) newGame(carryFlags = true)
     }
     private val saveLearning = Runnable { Learning.save(filesDir) }
+
+    /** 変換中の文字列が本当に入力欄のカーソルの前にあるか確かめ、なければ（送信で消えた等）リセットする */
+    private val verifyComposing = Runnable {
+        if (composer.isEmpty()) return@Runnable
+        val shown = candidateList.getOrNull(highlight) ?: composer.composing
+        val before = currentInputConnection?.getTextBeforeCursor(shown.length, 0)?.toString()
+        if (before != shown) resetComposing()
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -137,6 +147,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
         boardView = MinesweeperBoardView(this).also {
             it.listener = this
+            // 盤面の下に並ぶボタンの段の高さ（盤面自身の余白は LinearLayout が差し引く）
+            it.reservedBelowPx = (ClassicButton.BUTTON_HEIGHT_DP * density).toInt()
             root.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = pad
                 bottomMargin = pad
@@ -231,8 +243,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // 送信後に入力欄が作り直された（restarting）場合も、前の入力の続きを持ち越さない
+        resetComposing()
         if (!restarting) {
-            resetComposing()
             symbols = false
             if (!capsLock) shift = false
         }
@@ -257,8 +270,18 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         candidatesStart: Int, candidatesEnd: Int,
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        // 変換中にカーソルが別の場所へ動かされたら、変換中の文字列はそのまま確定扱いにする
-        if (!composer.isEmpty() && candidatesEnd >= 0 && (newSelStart != candidatesEnd || newSelEnd != candidatesEnd)) {
+        if (composer.isEmpty() && highlight < 0) return
+        if (candidatesEnd < 0) {
+            // 入力欄から変換中の文字列が消えた（メッセージを送信して入力欄が空になった等）。
+            // こちらの入力直後に届いた古い通知の可能性があるので、少し時間がたっているときだけ反映する
+            if (SystemClock.uptimeMillis() - lastEditAt > STALE_UPDATE_MS) {
+                resetComposing()
+            } else {
+                handler.removeCallbacks(verifyComposing)
+                handler.postDelayed(verifyComposing, STALE_UPDATE_MS)
+            }
+        } else if (newSelStart != candidatesEnd || newSelEnd != candidatesEnd) {
+            // 変換中にカーソルが別の場所へ動かされたら、変換中の文字列はそのまま確定扱いにする
             currentInputConnection?.finishComposingText()
             resetComposing()
         }
@@ -676,6 +699,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     }
 
     private fun updateComposing() {
+        lastEditAt = SystemClock.uptimeMillis()
         currentInputConnection?.setComposingText(composer.composing, 1)
     }
 
@@ -796,6 +820,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private fun selectNextCandidate() {
         highlight = (highlight + 1) % candidateList.size
         statusBar?.highlighted = highlight
+        lastEditAt = SystemClock.uptimeMillis()
         currentInputConnection?.setComposingText(candidateList[highlight], 1)
     }
 
@@ -932,6 +957,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     /** commitText は変換中の文字列があればそれを置き換えて確定する */
     private fun commit(text: String) {
         if (text.isEmpty()) return
+        lastEditAt = SystemClock.uptimeMillis()
         currentInputConnection?.commitText(text, 1)
     }
 
@@ -1028,6 +1054,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         /** 普通のキーボードでゲームが終わっても残す旗の数 */
         private const val CARRIED_FLAGS = 3
         private const val CLEAR_ALL_LIMIT = 100_000
+        /** これより前の自分の書き換えに対する選択範囲の通知は、古いものとして扱う */
+        private const val STALE_UPDATE_MS = 300L
         /** 日本語の単語を確定した直後に出す、つなぎの言葉 */
         private val NEXT_WORDS = listOf(
             "を", "に", "は", "が", "の", "で", "と", "も", "へ", "から", "まで", "より",
