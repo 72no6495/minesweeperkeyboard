@@ -41,6 +41,7 @@ class SettingsActivity : Activity() {
     private lateinit var spaceAfterCandidateBox: CheckBox
     private lateinit var punctuationGroup: RadioGroup
     private lateinit var learningBox: CheckBox
+    private lateinit var clipboardBox: CheckBox
     private lateinit var keyboardModeGroup: RadioGroup
     private val modeBoxes = LinkedHashMap<KeyboardMode, CheckBox>()
     private var shownMode = KeyboardMode.CLASSIC
@@ -248,6 +249,20 @@ class SettingsActivity : Activity() {
         punctuationGroup = radioGroup(PunctuationStyle.entries.map { it to it.label }, prefs.punctuationStyle)
         root.addView(punctuationGroup)
 
+        clipboardBox = checkBox("コピーした文字をクリップボードの履歴（📋キー）に残す", prefs.clipboardHistoryEnabled)
+        root.addView(clipboardBox)
+        root.addView(label("パスワードなど、アプリが「機密」と指定した文字は残しません（Android 13 以降）"))
+        root.addView(button("クリップボードの履歴をすべて消去（ピン留めも含む）") {
+            AlertDialog.Builder(this)
+                .setMessage("クリップボードの履歴をピン留めしたものも含めてすべて消去しますか？")
+                .setPositiveButton("消去") { _, _ ->
+                    Clipboard.reset(filesDir)
+                    Toast.makeText(this, "クリップボードの履歴を消去しました", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        })
+
         learningBox = checkBox("選んだ候補を学習して、次から先に出す", prefs.learningEnabled)
         root.addView(learningBox)
         root.addView(button("学習した内容を消去") {
@@ -452,6 +467,7 @@ class SettingsActivity : Activity() {
         prefs.spaceAfterCandidate = spaceAfterCandidateBox.isChecked
         prefs.punctuationStyle = selected<PunctuationStyle>(punctuationGroup) ?: PunctuationStyle.TOUTEN_KUTEN
         prefs.learningEnabled = learningBox.isChecked
+        prefs.clipboardHistoryEnabled = clipboardBox.isChecked
         // ラジオボタンを変えたときだけ書き込む（試し打ち欄でキーボードから切り替えた分を上書きしない）
         val selectedMode =
             keyboardModeGroup.findViewById<RadioButton>(keyboardModeGroup.checkedRadioButtonId)?.tag as? KeyboardMode
