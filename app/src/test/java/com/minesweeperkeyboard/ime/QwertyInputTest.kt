@@ -121,11 +121,16 @@ class QwertyInputTest {
         assertEquals(10, g.colCount)
         assertTrue(g.rows.all { it.length == g.colCount })
         assertEquals('q', g.keyAt(1, 0))
-        assertEquals("Q", g.label(1, 0, InputLanguage.ENGLISH, shift = true, symbols = false))
-        assertEquals("ー", g.label(2, 9, InputLanguage.ROMAJI, shift = false, symbols = false))
-        assertEquals("、", g.label(3, 7, InputLanguage.ROMAJI, shift = false, symbols = false))
-        assertEquals("，", g.label(3, 7, InputLanguage.ROMAJI, false, false, PunctuationStyle.COMMA_PERIOD))
-        assertEquals("!", g.label(1, 0, InputLanguage.ENGLISH, shift = false, symbols = true))
+        assertEquals("Q", g.label(1, 0, InputLanguage.ENGLISH, shift = true, layer = KeyLayer.LETTERS))
+        assertEquals("ー", g.label(2, 9, InputLanguage.ROMAJI, shift = false, layer = KeyLayer.LETTERS))
+        assertEquals("、", g.label(3, 7, InputLanguage.ROMAJI, shift = false, layer = KeyLayer.LETTERS))
+        assertEquals("，", g.label(3, 7, InputLanguage.ROMAJI, false, KeyLayer.LETTERS, PunctuationStyle.COMMA_PERIOD))
+        assertEquals("!", g.label(1, 0, InputLanguage.ENGLISH, shift = false, layer = KeyLayer.SYMBOLS))
+        assertEquals("👍", g.label(1, 0, InputLanguage.ENGLISH, shift = false, layer = KeyLayer.EMOJI))
+        assertEquals(KeyLayer.SYMBOLS, KeyLayer.LETTERS.next())
+        assertEquals(KeyLayer.EMOJI, KeyLayer.SYMBOLS.next())
+        assertEquals(KeyLayer.LETTERS, KeyLayer.EMOJI.next())
+        assertTrue(KeyGrid.EMOJI_ROWS.all { it.size == KeyGrid.COLS })
     }
 
     @Test
@@ -192,8 +197,8 @@ class QwertyInputTest {
         assertEquals(3 to 0, g.flagPosition)
         assertTrue(g.isFlagKey(3, 0))
         assertEquals('z', g.keyAt(3, 1))
-        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, symbols = false))
-        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, symbols = true))
+        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, layer = KeyLayer.LETTERS))
+        assertEquals("🚩", g.label(3, 0, InputLanguage.ENGLISH, shift = false, layer = KeyLayer.SYMBOLS))
         assertTrue(g.rows.all { it.length == KeyGrid.COLS })
         assertEquals(null, KeyGrid().flagPosition)
     }

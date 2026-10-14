@@ -150,6 +150,11 @@ class ImePrefs(context: Context) {
         get() = sp.getBoolean(KEY_LEARNING, true)
         set(v) = sp.edit().putBoolean(KEY_LEARNING, v).apply()
 
+    /** コピーした文字をクリップボードの履歴に残す */
+    var clipboardHistoryEnabled: Boolean
+        get() = sp.getBoolean(KEY_CLIPBOARD_HISTORY, true)
+        set(v) = sp.edit().putBoolean(KEY_CLIPBOARD_HISTORY, v).apply()
+
     fun keyGrid(flagKey: Boolean = false) = KeyGrid(keyLayout, numberRow, flagKey)
 
     private fun keySet(key: String, default: List<String>): Set<String> =
@@ -281,6 +286,7 @@ class ImePrefs(context: Context) {
         private const val KEY_SPACE_AFTER_CANDIDATE = "space_after_candidate"
         private const val KEY_PUNCTUATION = "punctuation_style"
         private const val KEY_LEARNING = "learning"
+        private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
         private const val KEY_SYSTEM_DICTIONARY = "system_dictionary"
         private const val KEY_QWERTY_MINES = "qwerty_mines"
         private const val KEY_BG_GAME = "background_game"

@@ -37,6 +37,15 @@ enum class LongPressAction(val key: String, val label: String) {
     }
 }
 
+/** キーの面：記号キーを押すたびに 文字 → 記号 → 絵文字 → 文字 の順に切り替わる */
+enum class KeyLayer(val buttonLabel: String) {
+    LETTERS("記号"),
+    SYMBOLS("絵文字"),
+    EMOJI("文字");
+
+    fun next(): KeyLayer = entries[(ordinal + 1) % entries.size]
+}
+
 /** 英字の並び（どれも 10 列） */
 enum class KeyLayout(val key: String, val label: String, val letterRows: List<String>) {
     QWERTY("qwerty", "QWERTY", listOf("qwertyuiop", "asdfghjkl-", "zxcvbnm,.?")),
@@ -78,6 +87,7 @@ class KeyGrid(
     private val symbolRows: List<String> = SYMBOL_ROWS.take(rows.size).let { rows ->
         if (flagKey) rows.dropLast(1) + (FLAG + rows.last().drop(1)) else rows
     }
+    private val emojiRows: List<List<String>> = EMOJI_ROWS.take(rows.size)
 
     /** 🚩キーの位置（なければ null） */
     val flagPosition: Pair<Int, Int>? = if (flagKey) (rows.size - 1) to 0 else null
@@ -91,13 +101,22 @@ class KeyGrid(
 
     fun symbolAt(r: Int, c: Int): Char = symbolRows[r][c]
 
+    fun emojiAt(r: Int, c: Int): String = emojiRows[r][c]
+
+    /** その面で入力される文字列（記号・絵文字の面）。文字の面は [keyAt] を使う */
+    fun textAt(r: Int, c: Int, layer: KeyLayer): String = when (layer) {
+        KeyLayer.LETTERS -> keyAt(r, c).toString()
+        KeyLayer.SYMBOLS -> symbolAt(r, c).toString()
+        KeyLayer.EMOJI -> emojiAt(r, c)
+    }
+
     /** キーに表示する文字 */
     fun label(
-        r: Int, c: Int, language: InputLanguage, shift: Boolean, symbols: Boolean,
+        r: Int, c: Int, language: InputLanguage, shift: Boolean, layer: KeyLayer = KeyLayer.LETTERS,
         punctuation: PunctuationStyle = PunctuationStyle.TOUTEN_KUTEN,
     ): String {
         if (isFlagKey(r, c)) return "🚩"
-        if (symbols) return symbolAt(r, c).toString()
+        if (layer != KeyLayer.LETTERS) return textAt(r, c, layer)
         val k = keyAt(r, c)
         return when (language) {
             InputLanguage.ENGLISH -> if (shift) k.uppercaseChar().toString() else k.toString()
@@ -115,6 +134,14 @@ class KeyGrid(
             "!@#$%&*()?",
             "-_=+;:'\"/,",
             "<>[]{}~^|\\",
+        )
+
+        /** 絵文字の面（10 個 × 4 行。数字の行がないときは上の 3 行） */
+        val EMOJI_ROWS: List<List<String>> = listOf(
+            listOf("😀", "😂", "🥹", "😍", "😘", "😎", "🤔", "😭", "😡", "😱"),
+            listOf("👍", "👏", "🙏", "💪", "👀", "🙌", "👌", "✌️", "🤝", "👋"),
+            listOf("❤️", "💔", "✨", "🔥", "💯", "🎉", "💣", "💥", "🚩", "⭐"),
+            listOf("🐱", "🐶", "🍣", "🍺", "☕", "🍰", "🌸", "☀️", "🌙", "🎮"),
         )
 
         /** ローマ字入力時の記号の置き換え（"-" は変換表で「ー」になる） */

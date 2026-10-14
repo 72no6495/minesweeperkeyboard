@@ -1,6 +1,8 @@
 package com.minesweeperkeyboard.ime
 
 import android.annotation.SuppressLint
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
@@ -30,7 +32,7 @@ import android.widget.LinearLayout
  * QWERTY 系では学習・ユーザー辞書・日本語辞書の単語を予測変換の候補としてニコちゃんの左右に表示する。
  * 文字の入力を最優先にし、候補の検索は別スレッドで行う。
  */
-class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
+class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener, ClipboardPanel.Listener {
 
     private lateinit var prefs: ImePrefs
     private var engine: MinesweeperEngine? = null
@@ -55,6 +57,11 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     /** クラシック：🚩モード／QWERTY：シフト */
     private var thirdButton: ClassicButton? = null
     private var symbolButton: ClassicButton? = null
+    private var clipboardButton: ClassicButton? = null
+    private var clipboardPanel: ClipboardPanel? = null
+    private val clipboardManager: ClipboardManager? get() = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    /** コピーされたら履歴に残す */
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { recordClipboard() }
     private var globeButton: ClassicButton? = null
 
     /** 🚩モード：タップで旗、長押しで開く（クラシックのみ） */
@@ -64,8 +71,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     private var capsLock = false
     /** 文の始めなどで自動的に大文字にする状態 */
     private var autoShift = false
-    /** 記号モード */
-    private var symbols = false
+    /** キーの面（文字 → 記号 → 絵文字） */
+    private var layer = KeyLayer.LETTERS
     /** 英語入力で「単語＋スペース」を入れた時刻（スペース 2 回でピリオド用） */
     private var lastWordSpaceAt = 0L
     /** このキーボードが最後に入力欄を書き換えた時刻 */
@@ -113,7 +120,12 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         super.onCreate()
         prefs = ImePrefs(this)
         ClassicStyle.applyTheme(prefs.theme)
-        workerHandler.post { Learning.ensureLoaded(filesDir) }
+        workerHandler.post {
+            Learning.ensureLoaded(filesDir)
+            Clipboard.ensureLoaded(filesDir)
+            handler.post { if (clipboardPanel?.visibility == View.VISIBLE) refreshClipboardPanel() }
+        }
+        runCatching { clipboardManager?.addPrimaryClipChangedListener(clipListener) }
         // 日本語辞書は初回に展開が必要なので、先にバックグラウンドで読み込んでおく
         if (prefs.systemDictionaryEnabled) SystemDictionaryLoader.getOrLoadAsync(this)
     }
@@ -150,6 +162,15 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             // 盤面の下に並ぶボタンの段の高さ（盤面自身の余白は LinearLayout が差し引く）
             it.reservedBelowPx = (ClassicButton.BUTTON_HEIGHT_DP * density).toInt()
             root.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = pad
+                bottomMargin = pad
+            })
+        }
+
+        // クリップボードのパネル（開いている間は盤面の代わりに同じ高さで表示する）
+        clipboardPanel = ClipboardPanel(this, this).also {
+            it.visibility = View.GONE
+            root.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0).apply {
                 topMargin = pad
                 bottomMargin = pad
             })
@@ -222,12 +243,14 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             updateButtons()
             true
         }
+        // 記号キー：文字 → 記号 → 絵文字 → 文字 の順に切り替え
         symbolButton = add("記号", 1.1f) {
-            symbols = !symbols
-            if (symbols) finishComposing()
+            layer = layer.next()
+            if (layer != KeyLayer.LETTERS) finishComposing()
             refreshKeyLabels()
             updateButtons()
         }
+        clipboardButton = add("📋", 0.9f) { toggleClipboardPanel() }
         add("⚙", 0.9f) { openSettings() }
         globeButton = add("🌐", 0.9f) { switchKeyboard() }.also {
             it.setOnLongClickListener {
@@ -246,7 +269,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         // 送信後に入力欄が作り直された（restarting）場合も、前の入力の続きを持ち越さない
         resetComposing()
         if (!restarting) {
-            symbols = false
+            showClipboardPanel(false)
+            layer = KeyLayer.LETTERS
             if (!capsLock) shift = false
         }
         // 設定画面で変更された内容を反映
@@ -288,9 +312,11 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
     }
 
     override fun onDestroy() {
+        runCatching { clipboardManager?.removePrimaryClipChangedListener(clipListener) }
         handler.removeCallbacksAndMessages(null)
         workerHandler.removeCallbacksAndMessages(null)
         workerHandler.post(saveLearning)
+        workerHandler.post(saveClipboard)
         worker.quitSafely()
         super.onDestroy()
     }
@@ -351,7 +377,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             } else when (prefs.longPressAction) {
                 LongPressAction.SYMBOL -> {
                     keyFeedback(boardView, AudioManager.FX_KEYPRESS_STANDARD)
-                    typeSymbol(grid.symbolAt(row, col))
+                    typeSymbol(grid.symbolAt(row, col).toString())
                 }
                 LongPressAction.FLAG ->
                     if (prefs.backgroundGameEnabled && !e.cell(row, col).isOpen) backgroundToggleFlag(row, col)
@@ -565,7 +591,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         val next = enabled.getOrNull((enabled.indexOf(mode) + 1) % enabled.size) ?: return
         if (next == mode) return
         finishComposing()
-        symbols = false
+        layer = KeyLayer.LETTERS
+        showClipboardPanel(false)
         prefs.keyboardMode = next
         applySettings(forceNewGame = true)
         updateAutoShift()
@@ -582,7 +609,7 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         composer.language = next
         shift = false
         capsLock = false
-        symbols = false
+        layer = KeyLayer.LETTERS
         updateAutoShift()
         refreshKeyLabels()
         updateButtons()
@@ -595,8 +622,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             thirdButton?.label = if (capsLock) "⇪" else "⇧"
             thirdButton?.isToggled = isEnglish() && (shift || capsLock || autoShift)
             symbolButton?.visibility = View.VISIBLE
-            symbolButton?.label = if (symbols) composer.language.label else "記号"
-            symbolButton?.isToggled = symbols
+            // ボタンには「次に切り替わる面」を表示する
+            symbolButton?.label = if (layer == KeyLayer.EMOJI) composer.language.label else layer.buttonLabel
+            symbolButton?.isToggled = layer != KeyLayer.LETTERS
         } else {
             secondButton?.label = getString(prefs.difficulty.labelRes)
             thirdButton?.label = "🚩"
@@ -618,9 +646,9 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         val g = grid
         val language = composer.language
         val upper = upperCaseNext()
-        val sym = symbols
+        val currentLayer = layer
         val punctuation = composer.punctuation
-        boardView?.keyLabel = { r, c -> g.label(r, c, language, upper, sym, punctuation) }
+        boardView?.keyLabel = { r, c -> g.label(r, c, language, upper, currentLayer, punctuation) }
     }
 
     /** 座標モードでは閉じたマスに、開くと入力される文字を表示する（クラシックのみ） */
@@ -660,8 +688,8 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         if (row !in 0 until grid.rowCount || col !in 0 until grid.colCount || grid.isFlagKey(row, col)) return
         // 空白キーで候補を選んでいる途中なら、その候補を確定してから次の文字へ
         if (highlight >= 0) pickCandidate(highlight)
-        if (symbols) {
-            typeSymbol(grid.symbolAt(row, col))
+        if (layer != KeyLayer.LETTERS) {
+            typeSymbol(grid.textAt(row, col, layer))
             return
         }
         val key = grid.keyAt(row, col)
@@ -686,11 +714,11 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
         updateCandidates()
     }
 
-    /** 記号はそのまま確定して入力する */
-    private fun typeSymbol(ch: Char) {
+    /** 記号・絵文字はそのまま確定して入力する */
+    private fun typeSymbol(text: String) {
         if (highlight >= 0) pickCandidate(highlight)
         finishComposing()
-        commit(ch.toString())
+        commit(text)
         lastWordSpaceAt = 0
         lastWord = null
         updateAutoShift()
@@ -1010,6 +1038,96 @@ class MinesweeperIME : InputMethodService(), MinesweeperBoardView.Listener {
             }
             return true
         }
+    }
+
+    // ---------------------------------------------------------------- クリップボード
+
+    private fun toggleClipboardPanel() {
+        showClipboardPanel(clipboardPanel?.visibility != View.VISIBLE)
+    }
+
+    private fun showClipboardPanel(show: Boolean) {
+        val panel = clipboardPanel ?: return
+        val board = boardView ?: return
+        if (show == (panel.visibility == View.VISIBLE)) return
+        if (show) {
+            // キーボードの高さが変わらないよう、盤面と同じ高さで表示する
+            val h = board.height.takeIf { it > 0 } ?: (220 * resources.displayMetrics.density).toInt()
+            panel.layoutParams = panel.layoutParams.apply { height = h }
+            recordClipboard()
+            refreshClipboardPanel()
+            board.visibility = View.GONE
+            panel.visibility = View.VISIBLE
+        } else {
+            panel.visibility = View.GONE
+            board.visibility = View.VISIBLE
+        }
+        clipboardButton?.isToggled = show
+    }
+
+    private fun refreshClipboardPanel() {
+        clipboardPanel?.setItems(Clipboard.history.items())
+    }
+
+    /** 今クリップボードにある文字を履歴に入れる（パスワードなど「機密」と印の付いたものは残さない） */
+    private fun recordClipboard() {
+        if (!prefs.clipboardHistoryEnabled) return
+        val clip = runCatching { clipboardManager?.primaryClip }.getOrNull() ?: return
+        if (clip.itemCount == 0) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            clip.description?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
+        ) return
+        val text = runCatching { clip.getItemAt(0).coerceToText(this)?.toString() }.getOrNull() ?: return
+        if (Clipboard.history.add(text)) {
+            saveClipboardHistory()
+            if (clipboardPanel?.visibility == View.VISIBLE) refreshClipboardPanel()
+        }
+    }
+
+    private fun saveClipboardHistory() {
+        workerHandler.removeCallbacks(saveClipboard)
+        workerHandler.postDelayed(saveClipboard, 500L)
+    }
+
+    private val saveClipboard = Runnable { Clipboard.save(filesDir) }
+
+    override fun onClipPaste(text: String) {
+        keyFeedback(clipboardPanel, AudioManager.FX_KEYPRESS_STANDARD)
+        if (highlight >= 0) pickCandidate(highlight)
+        finishComposing()
+        commit(text)
+        lastWord = null
+        updateCandidates()
+    }
+
+    override fun onClipTogglePin(text: String) {
+        keyFeedback(clipboardPanel, AudioManager.FX_KEYPRESS_STANDARD)
+        Clipboard.history.togglePin(text)
+        saveClipboardHistory()
+        refreshClipboardPanel()
+    }
+
+    override fun onClipDelete(text: String) {
+        keyFeedback(clipboardPanel, AudioManager.FX_KEYPRESS_DELETE)
+        Clipboard.history.remove(text)
+        saveClipboardHistory()
+        refreshClipboardPanel()
+    }
+
+    override fun onClipEditorAction(id: Int) {
+        keyFeedback(clipboardPanel, AudioManager.FX_KEYPRESS_STANDARD)
+        if (highlight >= 0) pickCandidate(highlight)
+        finishComposing()
+        currentInputConnection?.performContextMenuAction(id)
+        // コピー・切り取りした文字は、通知が来なくても少し後に履歴へ入れる
+        if (id == android.R.id.copy || id == android.R.id.cut) handler.postDelayed({ recordClipboard() }, 300L)
+    }
+
+    override fun onClipClearHistory() {
+        keyFeedback(clipboardPanel, AudioManager.FX_KEYPRESS_DELETE)
+        Clipboard.history.clearUnpinned()
+        saveClipboardHistory()
+        refreshClipboardPanel()
     }
 
     // ---------------------------------------------------------------- その他
