@@ -60,6 +60,13 @@ class MinesweeperBoardView(context: Context) : View(context) {
 
     var hapticsEnabled = true
 
+    /** 盤面の下に必ず残す高さ（ボタンの段など、px） */
+    var reservedBelowPx = 0
+        set(value) {
+            field = value
+            requestLayout()
+        }
+
     /** 閉じたマスに薄く表示する文字（座標モードで「開くと何が入力されるか」を示す） */
     var cellHint: ((row: Int, col: Int) -> String?)? = null
         set(value) {
@@ -180,9 +187,14 @@ class MinesweeperBoardView(context: Context) : View(context) {
             setMeasuredDimension(width, 0)
             return
         }
-        val maxHeight = resources.displayMetrics.heightPixels * maxHeightRatio
+        var maxHeight = resources.displayMetrics.heightPixels * maxHeightRatio
+        // 親から高さの上限が来ているときは、下に並ぶボタンの段の分を残して盤面のほうを縮める
+        // （そうしないと最後に測られるボタンの段が潰れる）
+        if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+            maxHeight = min(maxHeight, (MeasureSpec.getSize(heightMeasureSpec) - reservedBelowPx).toFloat())
+        }
         val availW = width - outerBorder * 2
-        val availH = maxHeight - outerBorder * 2
+        val availH = max(1f, maxHeight - outerBorder * 2)
         if (style == Style.CLASSIC) {
             cellW = max(1f, min(availW / e.cols, availH / e.rows)).toInt().toFloat()
             cellH = cellW

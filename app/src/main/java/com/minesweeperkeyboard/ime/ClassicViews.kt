@@ -337,6 +337,10 @@ class StatusBarView(context: Context) : View(context) {
 /** Windows 95 風の立体ボタン（押すと凹む） */
 class ClassicButton(context: Context, label: String) : View(context) {
 
+    companion object {
+        const val BUTTON_HEIGHT_DP = 44
+    }
+
     var label: String = label
         set(v) { field = v; invalidate() }
 
@@ -360,10 +364,8 @@ class ClassicButton(context: Context, label: String) : View(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(
-            MeasureSpec.getSize(widthMeasureSpec),
-            resolveSize((44 * density).toInt(), heightMeasureSpec),
-        )
+        // 親の高さが足りなくても潰さない（盤面のほうを縮めて場所を空ける）
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (BUTTON_HEIGHT_DP * density).toInt())
     }
 
     override fun drawableStateChanged() {
